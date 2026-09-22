@@ -1,0 +1,17 @@
+{
+  "name": "bubble-semble",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter @bubble-semble/web test:e2e",
+    "dev:web": "pnpm --filter @bubble-semble/web dev",
+    "dev:realtime": "pnpm --filter @bubble-semble/realtime dev"
+  }
+}
