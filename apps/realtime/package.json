@@ -7,7 +7,7 @@
     "dev": "wrangler dev --ip 127.0.0.1 --port 8787",
     "build": "wrangler deploy --dry-run --outdir dist",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --max-workers=1 --no-isolate"
   },
   "dependencies": {
     "@bubble-semble/game-core": "workspace:*",
@@ -15,10 +15,10 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/vitest-plugin": "^1.2.1",
     "@cloudflare/workers-types": "^5.20260921.1",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.1",
+    "vitest": "^4.1.0",
     "wrangler": "^4.135.0"
   }
 }

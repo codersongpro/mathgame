@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-/** 여섯 자리 영문 대문자·숫자 방 코드만 허용합니다. */
-export const RoomCodeSchema = z.string().regex(/^[A-Z0-9]{6}$/);
+/** I·O·0·1처럼 혼동하기 쉬운 문자를 뺀 여섯 자리 방 코드만 허용합니다. */
+export const RoomCodeSchema = z.string().regex(/^[A-HJ-NP-Z2-9]{6}$/);
 
 /** 임시 별명은 2~11자이며 제어 문자를 포함할 수 없습니다. */
 export const NicknameSchema = z
