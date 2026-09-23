@@ -27,7 +27,7 @@ type LoadClient = {
   errorCode: string | null;
 };
 
-const ROOM_CODE = process.env.ROOM_CODE || "B7K9Q2";
+const ROOM_CODE = process.env.ROOM_CODE || "738492";
 const REALTIME_BASE_URL = process.env.REALTIME_URL || "ws://127.0.0.1:8787";
 const DURATION_MS = Number(process.env.LOAD_DURATION_MS || 20_000);
 const ROOM_URL = `${REALTIME_BASE_URL.replace(/\/$/, "")}/room/${ROOM_CODE}`;

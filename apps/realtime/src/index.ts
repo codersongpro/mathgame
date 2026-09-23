@@ -19,7 +19,7 @@ export default {
       return jsonError("NOT_FOUND", "요청 경로를 찾을 수 없습니다.", 404);
     }
 
-    const roomCode = match[1].toUpperCase();
+    const roomCode = match[1];
     if (!RoomCodeSchema.safeParse(roomCode).success) {
       return jsonError("INVALID_ROOM", "유효하지 않은 방 코드입니다.", 400);
     }

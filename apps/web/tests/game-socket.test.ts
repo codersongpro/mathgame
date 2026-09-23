@@ -64,7 +64,7 @@ class FakeWebSocket {
 function createOptions(overrides: Partial<GameSocketOptions> = {}): GameSocketOptions {
   return {
     url: "ws://127.0.0.1:8787",
-    room: "B7K9Q2",
+    room: "012345",
     nickname: "별빛토끼",
     WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
     storage: new FakeStorage(),

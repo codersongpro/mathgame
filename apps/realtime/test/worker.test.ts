@@ -27,30 +27,30 @@ function createFakeEnv() {
 describe("실시간 Worker 라우팅", () => {
   it("유효한 WebSocket 경로를 방 코드 Durable Object로 전달한다", async () => {
     const fake = createFakeEnv();
-    const request = new Request("https://realtime.example/room/B7K9Q2", {
+    const request = new Request("https://realtime.example/room/012345", {
       headers: { Upgrade: "websocket" },
     });
 
     const response = await worker.fetch(request, fake.env);
 
     expect(await response.text()).toBe("forwarded");
-    expect(fake.requestedNames).toEqual(["B7K9Q2"]);
+    expect(fake.requestedNames).toEqual(["012345"]);
     expect(fake.forwardedUrls).toEqual([request.url]);
   });
 
-  it("소문자 방 코드를 대문자로 정규화한다", async () => {
+  it("앞의 0이 붙은 방 코드를 그대로 사용한다", async () => {
     const fake = createFakeEnv();
     await worker.fetch(
-      new Request("https://realtime.example/room/b7k9q2", {
+      new Request("https://realtime.example/room/000001", {
         headers: { Upgrade: "websocket" },
       }),
       fake.env,
     );
 
-    expect(fake.requestedNames).toEqual(["B7K9Q2"]);
+    expect(fake.requestedNames).toEqual(["000001"]);
   });
 
-  it.each(["ABC", "ABC-12", "OOOOOO"])("잘못된 방 코드 %s를 거절한다", async (roomCode) => {
+  it.each(["12345", "1234567", "12A456", "12-456"])("잘못된 방 코드 %s를 거절한다", async (roomCode) => {
     const fake = createFakeEnv();
     const response = await worker.fetch(
       new Request(`https://realtime.example/room/${roomCode}`, {
@@ -67,7 +67,7 @@ describe("실시간 Worker 라우팅", () => {
   it("일반 HTTP 요청에는 WebSocket 업그레이드 필요 상태를 반환한다", async () => {
     const fake = createFakeEnv();
     const response = await worker.fetch(
-      new Request("https://realtime.example/room/B7K9Q2"),
+      new Request("https://realtime.example/room/012345"),
       fake.env,
     );
 

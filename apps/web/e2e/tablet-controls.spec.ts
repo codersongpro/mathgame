@@ -18,7 +18,7 @@ async function expectControlsInsideViewport(page: Page) {
 
 test("태블릿 크기와 회전 뒤에도 캔버스와 터치 조작이 보인다", async ({ page }) => {
   await page.setViewportSize({ width: 1_024, height: 600 });
-  await page.goto("/play?room=B7K9Q2&nickname=별빛토끼");
+  await page.goto("/play?room=702845&nickname=별빛토끼");
   await expectControlsInsideViewport(page);
 
   await page.setViewportSize({ width: 800, height: 600 });
