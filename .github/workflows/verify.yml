@@ -1,0 +1,55 @@
+name: Verify Bubble Semble
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "codex/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 저장소 받기
+        uses: actions/checkout@v4
+
+      - name: pnpm 준비
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+          run_install: false
+
+      - name: Node.js 24 준비
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: 잠금 파일대로 의존성 설치
+        run: pnpm install --frozen-lockfile
+
+      - name: 단위·통합 테스트
+        env:
+          WRANGLER_LOG: none
+        run: pnpm test
+
+      - name: 타입 검사
+        run: pnpm typecheck
+
+      - name: Vercel 웹 빌드 검사
+        run: pnpm --filter @bubble-semble/web build
+
+      - name: Cloudflare 실시간 서버 빌드 검사
+        env:
+          WRANGLER_LOG: none
+        run: pnpm --filter @bubble-semble/realtime build

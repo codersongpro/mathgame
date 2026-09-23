@@ -16,5 +16,41 @@
       "tag": "v1",
       "new_sqlite_classes": ["GameRoom"]
     }
-  ]
+  ],
+  "env": {
+    "preview": {
+      "name": "bubble-semble-realtime-preview",
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "GAME_ROOM",
+            "class_name": "GameRoom"
+          }
+        ]
+      },
+      "migrations": [
+        {
+          "tag": "preview-v1",
+          "new_sqlite_classes": ["GameRoom"]
+        }
+      ]
+    },
+    "production": {
+      "name": "bubble-semble-realtime-production",
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "GAME_ROOM",
+            "class_name": "GameRoom"
+          }
+        ]
+      },
+      "migrations": [
+        {
+          "tag": "production-v1",
+          "new_sqlite_classes": ["GameRoom"]
+        }
+      ]
+    }
+  }
 }
