@@ -7,8 +7,8 @@ describe("공통 프로토콜", () => {
     expect(NicknameSchema.parse("별빛토끼")).toBe("별빛토끼");
   });
 
-  it("11자리를 넘거나 제어 문자가 있는 별명을 거절한다", () => {
-    expect(() => NicknameSchema.parse("아주아주긴학생별명이에요")).toThrow();
+  it("12자리를 넘거나 제어 문자가 있는 별명을 거절한다", () => {
+    expect(() => NicknameSchema.parse("아주아주긴학생별명이에요요")).toThrow();
     expect(() => NicknameSchema.parse("학생\u0000")).toThrow();
   });
 

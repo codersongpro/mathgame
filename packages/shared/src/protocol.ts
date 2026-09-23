@@ -3,12 +3,12 @@ import { z } from "zod";
 /** I·O·0·1처럼 혼동하기 쉬운 문자를 뺀 여섯 자리 방 코드만 허용합니다. */
 export const RoomCodeSchema = z.string().regex(/^[A-HJ-NP-Z2-9]{6}$/);
 
-/** 임시 별명은 2~11자이며 제어 문자를 포함할 수 없습니다. */
+/** 임시 별명은 2~12자이며 제어 문자를 포함할 수 없습니다. */
 export const NicknameSchema = z
   .string()
   .min(2)
-  .max(11)
-  .regex(/^[^\p{Cc}\p{Cf}]+$/u);
+  .max(12)
+  .regex(/^[\p{L}\p{N} _-]+$/u);
 
 const JoinMessageSchema = z
   .object({
