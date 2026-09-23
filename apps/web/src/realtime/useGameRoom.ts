@@ -11,6 +11,7 @@ export function useGameRoom(url: string, room: string, nickname: string) {
   const socketRef = useRef<GameSocket | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [snapshot, setSnapshot] = useState<SnapshotMessage | null>(null);
+  const [playerId, setPlayerId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -19,6 +20,7 @@ export function useGameRoom(url: string, room: string, nickname: string) {
 
     const unsubscribeState = socket.subscribeState(setConnectionState);
     const unsubscribeMessage = socket.subscribe((message) => {
+      if (message.type === "joined") setPlayerId(message.playerId);
       if (message.type === "snapshot") setSnapshot(message);
       if (message.type === "error") setError(message.message);
     });
@@ -36,5 +38,5 @@ export function useGameRoom(url: string, room: string, nickname: string) {
     return socketRef.current?.sendInput(message) ?? false;
   }, []);
 
-  return { connectionState, snapshot, error, sendInput };
+  return { connectionState, snapshot, playerId, error, sendInput };
 }

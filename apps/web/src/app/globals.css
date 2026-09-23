@@ -310,6 +310,249 @@ h1 {
   background: var(--danger);
 }
 
+.touch-controls {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 28px;
+  width: 100%;
+  padding: 10px max(14px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  user-select: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.direction-controls {
+  display: flex;
+  gap: 12px;
+}
+
+.touch-button {
+  display: grid;
+  min-width: 64px;
+  min-height: 64px;
+  place-items: center;
+  padding: 8px;
+  border: 4px solid var(--pixel-border);
+  border-radius: 0;
+  color: var(--night);
+  background: var(--aqua);
+  box-shadow: 5px 5px 0 var(--pixel-border);
+  font-size: 1.25rem;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.touch-button[aria-pressed="true"] {
+  translate: 4px 4px;
+  background: var(--lemon);
+  box-shadow: 1px 1px 0 var(--pixel-border);
+}
+
+.touch-button:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: 3px;
+}
+
+.jump-button {
+  min-width: 88px;
+  color: var(--ink);
+  background: var(--pink);
+  font-size: 0.9rem;
+}
+
+.game-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100svh;
+  overflow: hidden;
+  background: var(--night);
+}
+
+.game-hud {
+  position: relative;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: auto auto auto minmax(240px, 1fr);
+  gap: 8px;
+  align-items: stretch;
+  padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 8px
+    max(10px, env(safe-area-inset-left));
+  border-bottom: 4px solid var(--pixel-border);
+  background: var(--panel);
+  box-shadow: 0 4px 0 var(--aqua-dark);
+}
+
+.room-chip,
+.roster-status,
+.map-status {
+  display: grid;
+  min-height: 44px;
+  align-content: center;
+  padding: 5px 10px;
+  border: 3px solid var(--pixel-border);
+  color: var(--night);
+  background: var(--lemon);
+  box-shadow: 3px 3px 0 var(--pixel-border);
+  line-height: 1.05;
+}
+
+.roster-status {
+  background: var(--aqua);
+}
+
+.map-status {
+  background: var(--pink);
+}
+
+.room-chip span,
+.roster-status span,
+.map-status span {
+  margin-top: 3px;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.game-stage {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.game-canvas,
+.game-canvas canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.game-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.game-stage > .touch-controls {
+  position: absolute;
+  z-index: 6;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  pointer-events: none;
+  background: linear-gradient(transparent, rgba(12, 9, 32, 0.78));
+}
+
+.game-stage > .touch-controls button {
+  pointer-events: auto;
+}
+
+.game-error {
+  position: absolute;
+  z-index: 8;
+  top: 18px;
+  left: 50%;
+  width: min(440px, calc(100% - 32px));
+  padding: 14px;
+  border: 4px solid var(--pixel-border);
+  color: var(--night);
+  background: var(--danger);
+  box-shadow: 6px 6px 0 var(--pixel-border);
+  transform: translateX(-50%);
+  text-align: center;
+}
+
+.game-error p {
+  margin: 0 0 8px;
+  font-weight: 900;
+}
+
+.game-error a,
+.invalid-room-card a {
+  display: inline-block;
+  padding: 9px 12px;
+  border: 3px solid var(--pixel-border);
+  color: var(--night);
+  background: var(--ink);
+  box-shadow: 3px 3px 0 var(--pixel-border);
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.invalid-room-shell {
+  display: grid;
+  min-height: 100svh;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(circle at 50% 0, #43367c, var(--night) 60%);
+}
+
+.invalid-room-card {
+  width: min(620px, 100%);
+  padding: 32px;
+  border: 5px solid var(--pixel-border);
+  background: var(--panel);
+  box-shadow: 10px 10px 0 #090717;
+}
+
+.invalid-room-card h1 {
+  font-size: clamp(2rem, 7vw, 4rem);
+  line-height: 1;
+  letter-spacing: -0.07em;
+}
+
+@media (max-width: 780px) {
+  .game-hud {
+    grid-template-columns: auto auto 1fr;
+  }
+
+  .map-status {
+    display: none;
+  }
+
+  .game-hud .connection-banner {
+    grid-column: 1 / -1;
+    min-height: 34px;
+    padding-block: 5px;
+  }
+}
+
+@media (orientation: portrait) {
+  .game-hud {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .map-status {
+    display: none;
+  }
+
+  .game-hud .connection-banner {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-height: 540px) {
+  .game-hud {
+    grid-template-columns: auto auto 1fr;
+    padding-block: 5px;
+  }
+
+  .map-status {
+    display: none;
+  }
+
+  .game-hud .connection-banner {
+    min-height: 38px;
+  }
+
+  .touch-controls {
+    padding-top: 5px;
+    padding-bottom: max(7px, env(safe-area-inset-bottom));
+  }
+}
+
 @keyframes hero-bob {
   50% {
     transform: translateY(-8px);
