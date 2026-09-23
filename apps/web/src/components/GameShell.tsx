@@ -77,6 +77,13 @@ export function GameShell({ room, nickname }: { room: string; nickname: string }
           <span>{nickname}</span>
         </div>
         <ConnectionBanner state={connectionState} />
+        <ul className="sr-only" aria-label="연결된 친구 위치" data-testid="player-roster">
+          {snapshot?.players.map((player) => (
+            <li key={player.id} data-nickname={player.nickname} data-x={player.x}>
+              {player.nickname}
+            </li>
+          ))}
+        </ul>
       </header>
 
       <section className="game-stage" aria-label="Bubble Semble 협동 게임 화면">
