@@ -9,6 +9,7 @@ import { TouchControls, type TouchInput } from "./TouchControls";
 import { useGameRoom } from "../realtime/useGameRoom";
 
 type Snapshot = Extract<ServerMessage, { type: "snapshot" }>;
+type Combat = Extract<ServerMessage, { type: "combat" }>;
 
 function realtimeRoomUrl(room: string) {
   const baseUrl = process.env.NEXT_PUBLIC_REALTIME_URL || "ws://127.0.0.1:8787";
@@ -25,15 +26,18 @@ const MAP_LABELS: Record<Snapshot["mapTier"], string> = {
 export function GameShell({ room, nickname }: { room: string; nickname: string }) {
   const gameContainerRef = useRef<HTMLDivElement>(null);
   const snapshotRef = useRef<Snapshot | null>(null);
+  const combatRef = useRef<Combat | null>(null);
   const playerIdRef = useRef<string | null>(null);
   const sequenceRef = useRef(0);
-  const { connectionState, snapshot, playerId, error, sendInput } = useGameRoom(
+  const directionRef = useRef<-1 | 1>(1);
+  const { connectionState, snapshot, combat, playerId, error, sendInput, sendAction } = useGameRoom(
     realtimeRoomUrl(room),
     room,
     nickname,
   );
 
   snapshotRef.current = snapshot;
+  combatRef.current = combat;
   playerIdRef.current = playerId;
 
   useEffect(() => {
@@ -46,6 +50,7 @@ export function GameShell({ room, nickname }: { room: string; nickname: string }
       if (disposed) return;
       game = createGame(parent, {
         getSnapshot: () => snapshotRef.current,
+        getCombat: () => combatRef.current,
         getLocalPlayerId: () => playerIdRef.current,
       });
     });
@@ -57,8 +62,14 @@ export function GameShell({ room, nickname }: { room: string; nickname: string }
   }, []);
 
   function handleTouchInput(input: TouchInput) {
+    if (input.axis !== 0) directionRef.current = input.axis;
     sequenceRef.current += 1;
     sendInput({ type: "input", sequence: sequenceRef.current, ...input });
+  }
+
+  function handleAction(kind: "fire" | "pop") {
+    sequenceRef.current += 1;
+    sendAction({ type: "action", sequence: sequenceRef.current, kind, direction: directionRef.current });
   }
 
   return (
@@ -74,7 +85,7 @@ export function GameShell({ room, nickname }: { room: string; nickname: string }
         </div>
         <div className="map-status">
           <strong>{snapshot ? MAP_LABELS[snapshot.mapTier] : "맵 준비 중"}</strong>
-          <span>{nickname}</span>
+          <span>{nickname} · 포획 {combat?.capturedCount ?? 0}</span>
         </div>
         <ConnectionBanner state={connectionState} />
         <ul className="sr-only" aria-label="연결된 친구 위치" data-testid="player-roster">
@@ -95,7 +106,11 @@ export function GameShell({ room, nickname }: { room: string; nickname: string }
           </div>
         ) : null}
         <ReconnectOverlay state={connectionState} />
-        <TouchControls onChange={handleTouchInput} />
+        <TouchControls
+          onChange={handleTouchInput}
+          onAction={handleAction}
+          actionsEnabled={connectionState === "online" && combat !== null}
+        />
       </section>
     </main>
   );

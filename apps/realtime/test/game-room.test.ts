@@ -6,11 +6,12 @@ import { InputRateLimiter } from "../src/rateLimit";
 function waitForMessage(
   socket: WebSocket,
   predicate: (message: ServerMessage) => boolean,
+  label = "WebSocket",
 ): Promise<ServerMessage> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       socket.removeEventListener("message", onMessage);
-      reject(new Error("WebSocket 응답 시간이 초과됐습니다."));
+      reject(new Error(`${label} 응답 시간이 초과됐습니다.`));
     }, 2_000);
 
     function onMessage(event: MessageEvent) {
@@ -70,6 +71,12 @@ describe("GameRoom", () => {
       }
 
       expect(playerIds.size).toBe(10);
+      const tenPlayerCombat = await waitForMessage(
+        sockets[0]!,
+        (message) => message.type === "combat" && message.monsters.length === 6,
+        "10인 몬스터 수",
+      );
+      expect(tenPlayerCombat.type).toBe("combat");
 
       const eleventh = await openSocket(roomName);
       sockets.push(eleventh);
@@ -224,5 +231,107 @@ describe("GameRoom", () => {
     expect(snapshot.players.map((player) => player.id)).not.toContain(third.joined.playerId);
     first.socket.close(1000, "test complete");
     replacement.socket.close(1000, "test complete");
+  });
+
+  it("두 학생이 같은 거품 포획을 보고 다른 학생이 팡 버튼으로 터뜨린다", async () => {
+    const roomName = `combat-${crypto.randomUUID()}`;
+    const first = await joinSocket(roomName, "학생1");
+    const second = await joinSocket(roomName, "학생2");
+
+    try {
+      const nearMonster = waitForMessage(
+        second.socket,
+        (message) =>
+          message.type === "snapshot" &&
+          (message.players.find((player) => player.id === second.joined.playerId)?.x ?? 0) > 285,
+        "친구 이동",
+      );
+      second.socket.send(JSON.stringify({ type: "input", sequence: 1, axis: 1, jump: false }));
+      await nearMonster;
+      const stopped = waitForMessage(
+        second.socket,
+        (message) =>
+          message.type === "snapshot" &&
+          message.players.find((player) => player.id === second.joined.playerId)?.velocityX === 0,
+        "친구 정지",
+      );
+      second.socket.send(JSON.stringify({ type: "input", sequence: 2, axis: 0, jump: false }));
+      await stopped;
+
+      const trappedForFirst = waitForMessage(
+        first.socket,
+        (message) =>
+          message.type === "combat" &&
+          message.bubbles.some((bubble) => bubble.trappedMonsterId !== null),
+        "첫 학생 포획 표시",
+      );
+      first.socket.send(JSON.stringify({ type: "action", sequence: 3, kind: "fire", direction: 1 }));
+      const trapped = await trappedForFirst;
+      const trappedForSecond = await waitForMessage(
+        second.socket,
+        (message) =>
+          message.type === "combat" &&
+          message.bubbles.some((bubble) => bubble.trappedMonsterId !== null),
+        "두 번째 학생 포획 표시",
+      );
+      expect(trappedForSecond.type).toBe("combat");
+      if (trapped.type !== "combat") throw new Error("포획 상태가 아닙니다.");
+      const trappedBubble = trapped.bubbles.find((bubble) => bubble.trappedMonsterId !== null);
+      if (!trappedBubble) throw new Error("갇힌 거품이 없습니다.");
+      const position = await waitForMessage(
+        second.socket,
+        (message) => message.type === "snapshot",
+        "친구 위치",
+      );
+      if (position.type !== "snapshot") throw new Error("위치 상태가 아닙니다.");
+      const friend = position.players.find((player) => player.id === second.joined.playerId);
+      if (!friend) throw new Error("친구 위치가 없습니다.");
+      if (Math.abs(friend.x - trappedBubble.x) > 50) {
+        const direction = friend.x < trappedBubble.x ? 1 : -1;
+        const nearBubble = waitForMessage(
+          second.socket,
+          (message) =>
+            message.type === "snapshot" &&
+            Math.abs((message.players.find((player) => player.id === second.joined.playerId)?.x ?? 0) - trappedBubble.x) <= 50,
+          "거품 근접",
+        );
+        second.socket.send(JSON.stringify({ type: "input", sequence: 3, axis: direction, jump: false }));
+        await nearBubble;
+        second.socket.send(JSON.stringify({ type: "input", sequence: 4, axis: 0, jump: false }));
+      }
+
+      const capturedForFirst = waitForMessage(
+        first.socket,
+        (message) => message.type === "combat" && message.capturedCount === 1,
+        "첫 학생 포획 결과",
+      );
+      second.socket.send(JSON.stringify({ type: "action", sequence: 3, kind: "pop", direction: 1 }));
+      await capturedForFirst;
+      const capturedForSecond = await waitForMessage(
+        second.socket,
+        (message) => message.type === "combat" && message.capturedCount === 1,
+        "두 번째 학생 포획 결과",
+      );
+      expect(capturedForSecond).toMatchObject({ type: "combat", capturedCount: 1 });
+    } finally {
+      first.socket.close(1000, "test complete");
+      second.socket.close(1000, "test complete");
+    }
+  });
+
+  it("위조 위치를 담은 거품 행동을 거절한다", async () => {
+    const player = await joinSocket(`invalid-combat-${crypto.randomUUID()}`, "학생1");
+    try {
+      const error = waitForMessage(
+        player.socket,
+        (message) => message.type === "error" && message.code === "INVALID_MESSAGE",
+      );
+      player.socket.send(
+        JSON.stringify({ type: "action", sequence: 1, kind: "fire", direction: 1, x: 9999 }),
+      );
+      await expect(error).resolves.toMatchObject({ type: "error", code: "INVALID_MESSAGE" });
+    } finally {
+      player.socket.close(1000, "test complete");
+    }
   });
 });

@@ -27,6 +27,16 @@ const InputMessageSchema = z
   })
   .strict();
 
+/** 거품 행동은 요청만 전달하며 위치와 포획 결과는 서버가 정합니다. */
+const ActionMessageSchema = z
+  .object({
+    type: z.literal("action"),
+    sequence: z.number().int().nonnegative(),
+    kind: z.enum(["fire", "pop"]),
+    direction: z.union([z.literal(-1), z.literal(1)]),
+  })
+  .strict();
+
 const PingMessageSchema = z
   .object({
     type: z.literal("ping"),
@@ -37,6 +47,7 @@ const PingMessageSchema = z
 export const ClientMessageSchema = z.discriminatedUnion("type", [
   JoinMessageSchema,
   InputMessageSchema,
+  ActionMessageSchema,
   PingMessageSchema,
 ]);
 
@@ -77,6 +88,30 @@ const SnapshotMessageSchema = z
   })
   .strict();
 
+const CombatMessageSchema = z
+  .object({
+    type: z.literal("combat"),
+    serverTick: z.number().int().nonnegative(),
+    monsters: z.array(
+      z.object({
+        id: z.string().min(1),
+        x: z.number().finite(),
+        y: z.number().finite(),
+        trapped: z.boolean(),
+      }).strict(),
+    ).max(8),
+    bubbles: z.array(
+      z.object({
+        id: z.string().min(1),
+        x: z.number().finite(),
+        y: z.number().finite(),
+        trappedMonsterId: z.string().min(1).nullable(),
+      }).strict(),
+    ).max(80),
+    capturedCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
 const PongMessageSchema = z
   .object({
     type: z.literal("pong"),
@@ -96,6 +131,7 @@ const ErrorMessageSchema = z
 export const ServerMessageSchema = z.discriminatedUnion("type", [
   JoinedMessageSchema,
   SnapshotMessageSchema,
+  CombatMessageSchema,
   PongMessageSchema,
   ErrorMessageSchema,
 ]);

@@ -4,9 +4,11 @@ import Phaser from "phaser";
 import { RemotePlayerView } from "./RemotePlayerView";
 
 type Snapshot = Extract<ServerMessage, { type: "snapshot" }>;
+type Combat = Extract<ServerMessage, { type: "combat" }>;
 
 export type GameViewBridge = {
   getSnapshot: () => Snapshot | null;
+  getCombat: () => Combat | null;
   getLocalPlayerId: () => string | null;
 };
 
@@ -24,8 +26,10 @@ export class BubbleSembleScene extends Phaser.Scene {
   readonly #bridge: GameViewBridge;
   #localPlayer: Phaser.GameObjects.Image | null = null;
   #remotePlayers: RemotePlayerView | null = null;
+  #combatGraphics: Phaser.GameObjects.Graphics | null = null;
   #mapGraphics: Phaser.GameObjects.Graphics[] = [];
   #lastSnapshotTick = -1;
+  #lastCombatTick = -1;
   #mapTier: Snapshot["mapTier"] = "small";
 
   constructor(bridge: GameViewBridge) {
@@ -40,6 +44,7 @@ export class BubbleSembleScene extends Phaser.Scene {
   create() {
     this.cameras.main.setBackgroundColor("#141126");
     this.#drawMap(this.#mapTier);
+    this.#combatGraphics = this.add.graphics().setDepth(3);
     this.#localPlayer = this.add.image(80, FLOOR_Y, LUMI_TEXTURE).setOrigin(0.5, 1).setDepth(5);
     this.#localPlayer.setScale(1.5);
     this.#remotePlayers = new RemotePlayerView(this);
@@ -70,7 +75,43 @@ export class BubbleSembleScene extends Phaser.Scene {
       );
     }
 
+    const combat = this.#bridge.getCombat();
+    if (combat && combat.serverTick !== this.#lastCombatTick) {
+      this.#lastCombatTick = combat.serverTick;
+      this.#drawCombat(combat);
+    }
+
     this.#remotePlayers?.update(time);
+  }
+
+  /** 몬스터와 거품은 서버의 좌표만 사용해 레트로 도형으로 그립니다. */
+  #drawCombat(combat: Combat) {
+    const graphics = this.#combatGraphics;
+    if (!graphics) return;
+    graphics.clear();
+
+    for (const monster of combat.monsters) {
+      if (monster.trapped) continue;
+      graphics.fillStyle(0xff8c82, 1);
+      graphics.fillRect(monster.x - 15, monster.y - 19, 30, 30);
+      graphics.fillStyle(0x0c0920, 1);
+      graphics.fillRect(monster.x - 8, monster.y - 10, 5, 5);
+      graphics.fillRect(monster.x + 4, monster.y - 10, 5, 5);
+      graphics.lineStyle(3, 0x0c0920, 1);
+      graphics.strokeRect(monster.x - 15, monster.y - 19, 30, 30);
+    }
+
+    for (const bubble of combat.bubbles) {
+      const trapped = bubble.trappedMonsterId !== null;
+      graphics.fillStyle(trapped ? 0xffe066 : 0x65ebdb, 0.22);
+      graphics.fillCircle(bubble.x, bubble.y, trapped ? 23 : 16);
+      graphics.lineStyle(4, trapped ? 0xffe066 : 0x65ebdb, 1);
+      graphics.strokeCircle(bubble.x, bubble.y, trapped ? 23 : 16);
+      if (trapped) {
+        graphics.fillStyle(0xff8c82, 1);
+        graphics.fillRect(bubble.x - 8, bubble.y - 8, 16, 16);
+      }
+    }
   }
 
   #drawMap(tier: Snapshot["mapTier"]) {

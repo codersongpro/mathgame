@@ -27,6 +27,17 @@ describe("권한형 플레이어 이동", () => {
     expect(state.velocityX).toBe(MAX_MOVE_SPEED);
   });
 
+  it("이동 버튼을 놓으면 짧게 감속해 멈춘다", () => {
+    let state = { ...groundedState(), velocityX: MAX_MOVE_SPEED };
+
+    for (let sequence = 1; sequence <= 5; sequence += 1) {
+      state = stepPlayer(state, { sequence, axis: 0, jump: false }, TICK_SECONDS);
+    }
+
+    expect(state.velocityX).toBe(0);
+    expect(state.x).toBeLessThan(35);
+  });
+
   it("공중에서는 중력을 적용하고 바닥 아래로 내려가지 않는다", () => {
     const falling = stepPlayer(
       { x: 0, y: FLOOR_Y - 1, velocityX: 0, velocityY: 100, grounded: false },

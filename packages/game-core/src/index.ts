@@ -4,3 +4,4 @@ export const PACKAGE_NAME = "@bubble-semble/game-core" as const;
 export * from "./mapTier";
 export * from "./playerSimulation";
 export * from "./roomRoster";
+export * from "./combat";

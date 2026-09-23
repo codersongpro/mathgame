@@ -342,6 +342,11 @@ h1 {
   gap: 12px;
 }
 
+.action-controls {
+  display: flex;
+  gap: 12px;
+}
+
 .touch-button {
   display: grid;
   min-width: 64px;
@@ -370,10 +375,26 @@ h1 {
   outline-offset: 3px;
 }
 
+.touch-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .jump-button {
   min-width: 88px;
   color: var(--ink);
   background: var(--pink);
+  font-size: 0.9rem;
+}
+
+.bubble-button {
+  color: var(--ink);
+  background: var(--aqua-dark);
+  font-size: 0.9rem;
+}
+
+.pop-button {
+  background: var(--lemon);
   font-size: 0.9rem;
 }
 

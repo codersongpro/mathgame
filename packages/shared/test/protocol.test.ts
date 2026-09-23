@@ -29,4 +29,19 @@ describe("공통 프로토콜", () => {
       ClientMessageSchema.parse({ type: "input", sequence: 1, axis: 2, jump: false }),
     ).toThrow();
   });
+
+  it("거품 행동은 종류·순서·방향만 받고 위조 좌표는 거절한다", () => {
+    expect(
+      ClientMessageSchema.parse({ type: "action", sequence: 3, kind: "fire", direction: 1 }),
+    ).toMatchObject({ type: "action", kind: "fire" });
+    expect(() =>
+      ClientMessageSchema.parse({
+        type: "action",
+        sequence: 4,
+        kind: "pop",
+        direction: 1,
+        x: 9999,
+      }),
+    ).toThrow();
+  });
 });

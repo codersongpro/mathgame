@@ -40,11 +40,14 @@ export function stepPlayer(
     throw new RangeError("deltaSeconds must be a positive finite number");
   }
 
-  const velocityX = clamp(
-    state.velocityX + input.axis * MOVE_ACCELERATION * deltaSeconds,
-    -MAX_MOVE_SPEED,
-    MAX_MOVE_SPEED,
-  );
+  // 손을 뗐을 때 관성으로 계속 미끄러지지 않도록 같은 가속도로 감속합니다.
+  const velocityX = input.axis === 0
+    ? Math.sign(state.velocityX) * Math.max(0, Math.abs(state.velocityX) - MOVE_ACCELERATION * deltaSeconds)
+    : clamp(
+        state.velocityX + input.axis * MOVE_ACCELERATION * deltaSeconds,
+        -MAX_MOVE_SPEED,
+        MAX_MOVE_SPEED,
+      );
 
   const jumpVelocity = input.jump && state.grounded ? -JUMP_SPEED : state.velocityY;
   let velocityY = jumpVelocity + GRAVITY * deltaSeconds;

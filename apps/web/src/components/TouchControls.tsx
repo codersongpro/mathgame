@@ -8,8 +8,17 @@ export type TouchInput = {
 };
 
 type ControlName = "left" | "right" | "jump";
+type ActionName = "fire" | "pop";
 
-export function TouchControls({ onChange }: { onChange: (input: TouchInput) => void }) {
+export function TouchControls({
+  onChange,
+  onAction,
+  actionsEnabled,
+}: {
+  onChange: (input: TouchInput) => void;
+  onAction: (action: ActionName) => void;
+  actionsEnabled: boolean;
+}) {
   const activePointers = useRef<Record<ControlName, Set<number>>>(
     {
       left: new Set(),
@@ -83,16 +92,44 @@ export function TouchControls({ onChange }: { onChange: (input: TouchInput) => v
           <span aria-hidden="true">▶</span>
         </button>
       </div>
-      <button
-        type="button"
-        className="touch-button jump-button"
-        style={{ minWidth: 88, minHeight: 64 }}
-        aria-label="점프"
-        aria-pressed={input.jump}
-        {...controlProps("jump")}
-      >
-        <span aria-hidden="true">점프</span>
-      </button>
+      <div className="action-controls">
+        <button
+          type="button"
+          className="touch-button jump-button"
+          style={{ minWidth: 88, minHeight: 64 }}
+          aria-label="점프"
+          aria-pressed={input.jump}
+          {...controlProps("jump")}
+        >
+          <span aria-hidden="true">점프</span>
+        </button>
+        <button
+          type="button"
+          className="touch-button bubble-button"
+          style={{ minWidth: 76, minHeight: 64 }}
+          aria-label="거품 발사"
+          disabled={!actionsEnabled}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            if (actionsEnabled) onAction("fire");
+          }}
+        >
+          <span aria-hidden="true">거품</span>
+        </button>
+        <button
+          type="button"
+          className="touch-button pop-button"
+          style={{ minWidth: 76, minHeight: 64 }}
+          aria-label="팡! 터뜨리기"
+          disabled={!actionsEnabled}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            if (actionsEnabled) onAction("pop");
+          }}
+        >
+          <span aria-hidden="true">팡!</span>
+        </button>
+      </div>
     </div>
   );
 }
