@@ -4,6 +4,7 @@ import type { ServerMessage } from "@bubble-semble/shared";
 import Link from "next/link";
 import { useEffect, useRef } from "react";
 import { ConnectionBanner } from "./ConnectionBanner";
+import { ReconnectOverlay } from "./ReconnectOverlay";
 import { TouchControls, type TouchInput } from "./TouchControls";
 import { useGameRoom } from "../realtime/useGameRoom";
 
@@ -86,6 +87,7 @@ export function GameShell({ room, nickname }: { room: string; nickname: string }
             <Link href="/">로비로 돌아가기</Link>
           </div>
         ) : null}
+        <ReconnectOverlay state={connectionState} />
         <TouchControls onChange={handleTouchInput} />
       </section>
     </main>

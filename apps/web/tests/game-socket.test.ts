@@ -126,7 +126,15 @@ describe("GameSocket", () => {
       scheduled.at(-1)?.callback();
     }
 
-    expect(scheduled.map(({ delay }) => delay)).toEqual([1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]);
+    expect(scheduled.filter(({ delay }) => delay < 60_000).map(({ delay }) => delay)).toEqual([
+      1_000,
+      2_000,
+      4_000,
+      8_000,
+      16_000,
+      30_000,
+      30_000,
+    ]);
   });
 
   it("disconnect가 예약된 재접속을 취소한다", () => {
@@ -151,5 +159,33 @@ describe("GameSocket", () => {
     expect(cancelSchedule).toHaveBeenCalledWith(77);
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(socket.state).toBe("offline");
+  });
+
+  it("연결 복구가 60초를 넘으면 자동 재시도를 멈춘다", () => {
+    FakeWebSocket.instances = [];
+    const reconnects: Array<{ callback: () => void; delay: number }> = [];
+    const expirations: Array<{ callback: () => void; delay: number }> = [];
+    const socket = new GameSocket(
+      createOptions({
+        schedule: (callback, delay) => {
+          reconnects.push({ callback, delay });
+          return reconnects.length;
+        },
+        scheduleExpiry: (callback, delay) => {
+          expirations.push({ callback, delay });
+          return 99;
+        },
+      }),
+    );
+
+    socket.connect();
+    FakeWebSocket.instances[0]?.serverClose();
+    expect(expirations[0]?.delay).toBe(60_000);
+
+    expirations[0]?.callback();
+    reconnects[0]?.callback();
+
+    expect(socket.state).toBe("expired");
+    expect(FakeWebSocket.instances).toHaveLength(1);
   });
 });

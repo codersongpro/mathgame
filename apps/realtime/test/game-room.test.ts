@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { ServerMessageSchema, type ServerMessage } from "@bubble-semble/shared";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { InputRateLimiter } from "../src/rateLimit";
 
 function waitForMessage(
@@ -34,6 +34,23 @@ async function openSocket(roomName: string): Promise<WebSocket> {
   response.webSocket.accept();
   return response.webSocket;
 }
+
+async function joinSocket(roomName: string, nickname: string, reconnectToken?: string) {
+  const socket = await openSocket(roomName);
+  const joinedMessage = waitForMessage(socket, (message) => message.type === "joined");
+  socket.send(
+    JSON.stringify({
+      type: "join",
+      nickname,
+      ...(reconnectToken ? { reconnectToken } : {}),
+    }),
+  );
+  const joined = await joinedMessage;
+  if (joined.type !== "joined") throw new Error("입장 응답이 아닙니다.");
+  return { socket, joined };
+}
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("GameRoom", () => {
   it("열 명을 입장시키고 열한 번째를 거절하며 위조 좌표를 반영하지 않는다", async () => {
@@ -98,5 +115,114 @@ describe("GameRoom", () => {
     expect(limiter.allow(300)).toBe(false);
     expect(limiter.allow(5_299)).toBe(false);
     expect(limiter.allow(5_300)).toBe(true);
+  });
+
+  it("59초 안에는 같은 ID와 마지막 위치로 재접속한다", async () => {
+    const roomName = `reconnect-${crypto.randomUUID()}`;
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const first = await joinSocket(roomName, "별빛토끼");
+    const movingSnapshot = waitForMessage(
+      first.socket,
+      (message) =>
+        message.type === "snapshot" &&
+        (message.players.find((player) => player.id === first.joined.playerId)?.x ?? 0) > 80,
+    );
+    first.socket.send(JSON.stringify({ type: "input", sequence: 1, axis: 1, jump: false }));
+    const before = await movingSnapshot;
+    if (before.type !== "snapshot") throw new Error("이동 스냅샷이 아닙니다.");
+    const beforeX = before.players.find((player) => player.id === first.joined.playerId)?.x;
+    first.socket.close(1000, "temporary disconnect");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    now.mockReturnValue(1_059_000);
+    const restored = await joinSocket(roomName, "별빛토끼", first.joined.reconnectToken);
+    const restoredSnapshot = await waitForMessage(
+      restored.socket,
+      (message) => message.type === "snapshot",
+    );
+
+    expect(restored.joined.playerId).toBe(first.joined.playerId);
+    const restoredX =
+      restoredSnapshot.type === "snapshot"
+        ? restoredSnapshot.players.find((player) => player.id === first.joined.playerId)?.x
+        : null;
+    expect(restoredX).toBeGreaterThanOrEqual(beforeX ?? 0);
+    expect(restoredX).not.toBe(80);
+    restored.socket.close(1000, "test complete");
+  });
+
+  it("61초가 지난 토큰은 새 ID를 발급한다", async () => {
+    const roomName = `expired-${crypto.randomUUID()}`;
+    const now = vi.spyOn(Date, "now").mockReturnValue(2_000_000);
+    const first = await joinSocket(roomName, "달빛여우");
+    first.socket.close(1000, "expired disconnect");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    now.mockReturnValue(2_061_000);
+    const replacement = await joinSocket(roomName, "달빛여우", first.joined.reconnectToken);
+
+    expect(replacement.joined.playerId).not.toBe(first.joined.playerId);
+    replacement.socket.close(1000, "test complete");
+  });
+
+  it.each([
+    [2, "small"],
+    [3, "medium"],
+    [6, "large"],
+    [9, "xlarge"],
+  ] as const)("%i명으로 시작하면 %s 맵을 고정한다", async (playerCount, expectedTier) => {
+    const roomName = `map-${playerCount}-${crypto.randomUUID()}`;
+    const joined = [];
+    try {
+      for (let index = 1; index <= playerCount; index += 1) {
+        joined.push(await joinSocket(roomName, `학생${index}`));
+      }
+
+      const observer = joined[0]?.socket;
+      if (!observer) throw new Error("관찰 소켓이 없습니다.");
+      observer.send(JSON.stringify({ type: "input", sequence: 1, axis: 1, jump: false }));
+      const started = await waitForMessage(
+        observer,
+        (message) => message.type === "snapshot" && message.mapTier === expectedTier,
+      );
+      expect(started).toMatchObject({ type: "snapshot", mapTier: expectedTier });
+
+      joined.at(-1)?.socket.close(1000, "leave after start");
+      const afterLeave = await waitForMessage(observer, (message) => message.type === "snapshot");
+      expect(afterLeave).toMatchObject({ type: "snapshot", mapTier: expectedTier });
+    } finally {
+      for (const player of joined) player.socket.close(1000, "test complete");
+    }
+  });
+
+  it("만료된 슬롯을 제거해도 시작한 맵 크기는 바뀌지 않는다", async () => {
+    const roomName = `fixed-map-${crypto.randomUUID()}`;
+    const now = vi.spyOn(Date, "now").mockReturnValue(3_000_000);
+    const first = await joinSocket(roomName, "학생1");
+    const second = await joinSocket(roomName, "학생2");
+    const third = await joinSocket(roomName, "학생3");
+
+    first.socket.send(JSON.stringify({ type: "input", sequence: 1, axis: 0, jump: false }));
+    await waitForMessage(
+      first.socket,
+      (message) => message.type === "snapshot" && message.mapTier === "medium",
+    );
+    second.socket.close(1000, "leave");
+    third.socket.close(1000, "leave");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    now.mockReturnValue(3_061_000);
+    const replacement = await joinSocket(roomName, "학생4");
+    const snapshot = await waitForMessage(
+      first.socket,
+      (message) => message.type === "snapshot" && message.players.some((player) => player.id === replacement.joined.playerId),
+    );
+    if (snapshot.type !== "snapshot") throw new Error("스냅샷이 아닙니다.");
+
+    expect(snapshot.mapTier).toBe("medium");
+    expect(snapshot.players.map((player) => player.id)).not.toContain(second.joined.playerId);
+    expect(snapshot.players.map((player) => player.id)).not.toContain(third.joined.playerId);
+    first.socket.close(1000, "test complete");
+    replacement.socket.close(1000, "test complete");
   });
 });

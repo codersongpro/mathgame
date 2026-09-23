@@ -5,7 +5,7 @@ import {
   type ServerMessage,
 } from "@bubble-semble/shared";
 
-export type ConnectionState = "connecting" | "online" | "reconnecting" | "offline";
+export type ConnectionState = "connecting" | "online" | "reconnecting" | "expired" | "offline";
 
 type MessageListener = (message: ServerMessage) => void;
 type StateListener = (state: ConnectionState) => void;
@@ -18,6 +18,8 @@ export type GameSocketOptions = {
   storage?: Storage;
   schedule?: (callback: () => void, delay: number) => number;
   cancelSchedule?: (handle: number) => void;
+  scheduleExpiry?: (callback: () => void, delay: number) => number;
+  cancelExpiry?: (handle: number) => void;
 };
 
 const RECONNECT_DELAYS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000] as const;
@@ -32,12 +34,16 @@ export class GameSocket {
   readonly #storage: Storage | undefined;
   readonly #schedule: (callback: () => void, delay: number) => number;
   readonly #cancelSchedule: (handle: number) => void;
+  readonly #scheduleExpiry: (callback: () => void, delay: number) => number;
+  readonly #cancelExpiry: (handle: number) => void;
   readonly #messageListeners = new Set<MessageListener>();
   readonly #stateListeners = new Set<StateListener>();
 
   #socket: WebSocket | null = null;
   #retryHandle: number | null = null;
+  #expiryHandle: number | null = null;
   #retryAttempt = 0;
+  #expired = false;
   #explicitlyDisconnected = false;
   #state: ConnectionState = "offline";
 
@@ -51,6 +57,8 @@ export class GameSocket {
     this.#cancelSchedule =
       options.cancelSchedule ??
       ((handle) => globalThis.clearTimeout(handle as unknown as ReturnType<typeof setTimeout>));
+    this.#scheduleExpiry = options.scheduleExpiry ?? this.#schedule;
+    this.#cancelExpiry = options.cancelExpiry ?? this.#cancelSchedule;
   }
 
   get state() {
@@ -58,6 +66,7 @@ export class GameSocket {
   }
 
   connect() {
+    if (this.#expired) return;
     if (this.#socket && this.#socket.readyState !== this.#WebSocketImpl.CLOSED) return;
 
     this.#explicitlyDisconnected = false;
@@ -85,6 +94,8 @@ export class GameSocket {
         if (!result.success) return;
 
         if (result.data.type === "joined") {
+          this.#clearExpiryTimer();
+          this.#expired = false;
           this.#storage?.setItem(this.#storageKey(), result.data.reconnectToken);
           this.#retryAttempt = 0;
           this.#setState("online");
@@ -113,9 +124,11 @@ export class GameSocket {
       this.#cancelSchedule(this.#retryHandle);
       this.#retryHandle = null;
     }
+    this.#clearExpiryTimer();
     this.#socket?.close();
     this.#socket = null;
     this.#retryAttempt = 0;
+    this.#expired = false;
     this.#setState("offline");
   }
 
@@ -139,6 +152,13 @@ export class GameSocket {
   }
 
   #scheduleReconnect() {
+    if (this.#expiryHandle === null) {
+      let expiryHandle = 0;
+      expiryHandle = this.#scheduleExpiry(() => {
+        if (this.#expiryHandle === expiryHandle) this.#expireReconnectWindow();
+      }, 60_000);
+      this.#expiryHandle = expiryHandle;
+    }
     this.#setState("reconnecting");
     const delay =
       RECONNECT_DELAYS[Math.min(this.#retryAttempt, RECONNECT_DELAYS.length - 1)] ?? 30_000;
@@ -147,6 +167,25 @@ export class GameSocket {
       this.#retryHandle = null;
       if (!this.#explicitlyDisconnected) this.connect();
     }, delay);
+  }
+
+  #expireReconnectWindow() {
+    this.#expiryHandle = null;
+    this.#expired = true;
+    if (this.#retryHandle !== null) {
+      this.#cancelSchedule(this.#retryHandle);
+      this.#retryHandle = null;
+    }
+    const socket = this.#socket;
+    this.#socket = null;
+    socket?.close();
+    this.#setState("expired");
+  }
+
+  #clearExpiryTimer() {
+    if (this.#expiryHandle === null) return;
+    this.#cancelExpiry(this.#expiryHandle);
+    this.#expiryHandle = null;
   }
 
   #setState(state: ConnectionState) {

@@ -6,8 +6,10 @@ import {
   RoomRoster,
   selectMapTier,
   stepPlayer,
+  type MapTier,
   type PlayerInput,
   type PlayerSimulationState,
+  type RosterPlayer,
 } from "@bubble-semble/game-core";
 import {
   ClientMessageSchema,
@@ -28,6 +30,7 @@ type ConnectionState = ConnectionAttachment & {
 
 type Checkpoint = {
   serverTick: number;
+  roster: RosterPlayer[];
   players: Array<{
     id: string;
     x: number;
@@ -36,11 +39,17 @@ type Checkpoint = {
     velocityY: number;
     grounded: boolean;
   }>;
+  fixedMapTier: MapTier | null;
   updatedAt: number;
 };
 
 const TICK_INTERVAL_MS = 1_000 / TICK_RATE;
 const SNAPSHOT_EVERY_TICKS = TICK_RATE / SNAPSHOT_RATE;
+
+async function digestReconnectToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 function initialPlayerState(index: number): PlayerSimulationState {
   return {
@@ -61,6 +70,7 @@ export class GameRoom extends DurableObject<Env> {
   readonly #playerStates = new Map<string, PlayerSimulationState>();
   readonly #inputs = new Map<string, PlayerInput>();
   #serverTick = 0;
+  #fixedMapTier: MapTier | null = null;
   #timer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -71,6 +81,23 @@ export class GameRoom extends DurableObject<Env> {
       if (!attachment) continue;
       this.#connections.set(socket, { ...attachment, limiter: new InputRateLimiter() });
     }
+
+    this.ctx.blockConcurrencyWhile(async () => {
+      const checkpoint = await this.ctx.storage.get<Checkpoint>("checkpoint");
+      if (!checkpoint) return;
+      this.#serverTick = checkpoint.serverTick;
+      this.#fixedMapTier = checkpoint.fixedMapTier;
+      this.#roster.restore(checkpoint.roster);
+      for (const player of checkpoint.players) {
+        this.#playerStates.set(player.id, {
+          x: player.x,
+          y: player.y,
+          velocityX: player.velocityX,
+          velocityY: player.velocityY,
+          grounded: player.grounded,
+        });
+      }
+    });
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -132,10 +159,18 @@ export class GameRoom extends DurableObject<Env> {
         return;
       }
 
-      const joinRequest =
+      this.#pruneExpiredPlayers(Date.now());
+      const issuedToken = crypto.randomUUID();
+      const issuedReconnectToken = await digestReconnectToken(issuedToken);
+      const reconnectToken =
         message.reconnectToken === undefined
-          ? { nickname: message.nickname }
-          : { nickname: message.nickname, reconnectToken: message.reconnectToken };
+          ? undefined
+          : await digestReconnectToken(message.reconnectToken);
+      const joinRequest = {
+        nickname: message.nickname,
+        issuedReconnectToken,
+        ...(reconnectToken ? { reconnectToken } : {}),
+      };
       const joined = this.#roster.join(joinRequest, Date.now());
       if (!joined.ok) {
         this.#sendError(socket, joined.code, "방 정원은 최대 10명입니다.");
@@ -160,10 +195,11 @@ export class GameRoom extends DurableObject<Env> {
       this.#send(socket, {
         type: "joined",
         playerId: joined.player.id,
-        reconnectToken: joined.player.reconnectToken,
+        reconnectToken: joined.reconnected ? message.reconnectToken! : issuedToken,
         tickRate: TICK_RATE,
         snapshotRate: SNAPSHOT_RATE,
       });
+      await this.#persistCheckpoint();
       this.#startLoop();
       return;
     }
@@ -178,6 +214,10 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    if (this.#fixedMapTier === null) {
+      this.#fixedMapTier = selectMapTier(this.#connectedPlayerCount());
+      await this.#persistCheckpoint();
+    }
     this.#inputs.set(connection.playerId, message);
   }
 
@@ -238,6 +278,7 @@ export class GameRoom extends DurableObject<Env> {
     if (this.#serverTick % SNAPSHOT_EVERY_TICKS === 0) {
       this.#broadcastSnapshot();
     }
+    if (this.#serverTick % TICK_RATE === 0) await this.#persistCheckpoint();
 
     this.#startLoop();
   }
@@ -264,7 +305,7 @@ export class GameRoom extends DurableObject<Env> {
     const snapshot: ServerMessage = {
       type: "snapshot",
       serverTick: this.#serverTick,
-      mapTier: selectMapTier(Math.max(1, Math.min(10, rosterPlayers.length))),
+      mapTier: this.#fixedMapTier ?? selectMapTier(this.#connectedPlayerCount()),
       players: publicPlayers,
     };
 
@@ -277,10 +318,27 @@ export class GameRoom extends DurableObject<Env> {
     return this.#roster.players().some((player) => player.connected);
   }
 
+  #connectedPlayerCount(): number {
+    return Math.max(1, this.#roster.players().filter((player) => player.connected).length);
+  }
+
+  #pruneExpiredPlayers(now: number): void {
+    const beforeIds = this.#roster.players().map((player) => player.id);
+    if (this.#roster.pruneExpired(now) === 0) return;
+    const remainingIds = new Set(this.#roster.players().map((player) => player.id));
+    for (const playerId of beforeIds) {
+      if (remainingIds.has(playerId)) continue;
+      this.#playerStates.delete(playerId);
+      this.#inputs.delete(playerId);
+    }
+  }
+
   async #persistCheckpoint(): Promise<void> {
     const checkpoint: Checkpoint = {
       serverTick: this.#serverTick,
+      roster: this.#roster.players(),
       players: [...this.#playerStates].map(([id, state]) => ({ id, ...state })),
+      fixedMapTier: this.#fixedMapTier,
       updatedAt: Date.now(),
     };
     await this.ctx.storage.put("checkpoint", checkpoint);

@@ -11,6 +11,7 @@ export type RosterPlayer = {
 export type JoinRequest = {
   nickname: string;
   reconnectToken?: string;
+  issuedReconnectToken?: string;
 };
 
 export type JoinResult =
@@ -57,7 +58,7 @@ export class RoomRoster {
     const player: RosterPlayer = {
       id: this.factories.createPlayerId(),
       nickname: request.nickname,
-      reconnectToken: this.factories.createReconnectToken(),
+      reconnectToken: request.issuedReconnectToken ?? this.factories.createReconnectToken(),
       connected: true,
       disconnectedAt: null,
     };
@@ -92,5 +93,18 @@ export class RoomRoster {
 
   players(): RosterPlayer[] {
     return [...this.#players.values()].map(clonePlayer);
+  }
+
+  /** 저장소에서 검증된 방 명단을 복구합니다. 재접속 토큰은 원문이 아닌 다이제스트입니다. */
+  restore(players: readonly RosterPlayer[]): void {
+    if (players.length > ROOM_CAPACITY) {
+      throw new RangeError("restored player count exceeds room capacity");
+    }
+
+    this.#players.clear();
+    for (const player of players) {
+      if (this.#players.has(player.id)) throw new Error("duplicate restored player id");
+      this.#players.set(player.id, clonePlayer(player));
+    }
   }
 }

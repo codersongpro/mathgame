@@ -306,6 +306,7 @@ h1 {
   background: var(--lemon);
 }
 
+.connection-expired .connection-dot,
 .connection-offline .connection-dot {
   background: var(--danger);
 }
@@ -470,7 +471,8 @@ h1 {
 }
 
 .game-error a,
-.invalid-room-card a {
+.invalid-room-card a,
+.reconnect-overlay a {
   display: inline-block;
   padding: 9px 12px;
   border: 3px solid var(--pixel-border);
@@ -479,6 +481,49 @@ h1 {
   box-shadow: 3px 3px 0 var(--pixel-border);
   font-weight: 900;
   text-decoration: none;
+}
+
+.reconnect-overlay {
+  position: absolute;
+  z-index: 7;
+  top: 18px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 4px solid var(--pixel-border);
+  color: var(--night);
+  background: var(--lemon);
+  box-shadow: 5px 5px 0 var(--pixel-border);
+  transform: translateX(-50%);
+}
+
+.reconnect-overlay p {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.reconnect-spinner {
+  width: 14px;
+  height: 14px;
+  background: var(--aqua-dark);
+  animation: reconnect-blink 0.8s steps(2, end) infinite;
+}
+
+.reconnect-expired {
+  display: grid;
+  min-width: min(360px, calc(100% - 32px));
+  justify-items: center;
+  background: var(--danger);
+}
+
+@keyframes reconnect-blink {
+  50% {
+    opacity: 0.25;
+  }
 }
 
 .invalid-room-shell {
