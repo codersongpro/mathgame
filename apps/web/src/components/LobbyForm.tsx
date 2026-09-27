@@ -17,12 +17,12 @@ export function LobbyForm() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const normalizedRoom = room.trim().toUpperCase();
+    const normalizedRoom = room.trim();
     const normalizedNickname = nickname.trim();
     const nextErrors: FormErrors = {};
 
     if (!RoomCodeSchema.safeParse(normalizedRoom).success) {
-      nextErrors.room = "방 코드는 혼동 문자를 제외한 6자리입니다.";
+      nextErrors.room = "방 코드는 숫자 6자리입니다.";
     }
     if (!NicknameSchema.safeParse(normalizedNickname).success) {
       nextErrors.nickname = "별명은 2~12자로 입력해 주세요.";
@@ -42,13 +42,14 @@ export function LobbyForm() {
           id="room-code"
           name="room"
           value={room}
-          onChange={(event) => setRoom(event.target.value.toUpperCase().slice(0, 6))}
+          onChange={(event) => setRoom(event.target.value.slice(0, 6))}
           aria-describedby={errors.room ? "room-error" : "room-hint"}
           aria-invalid={Boolean(errors.room)}
           autoComplete="off"
-          inputMode="text"
+          inputMode="numeric"
+          pattern="[0-9]{6}"
           maxLength={6}
-          placeholder="B7K9Q2"
+          placeholder="012345"
         />
         {errors.room ? (
           <p className="field-error" id="room-error">
@@ -56,7 +57,7 @@ export function LobbyForm() {
           </p>
         ) : (
           <p className="field-hint" id="room-hint">
-            선생님이 알려준 6자리 코드를 입력하세요.
+            숫자 6자리를 입력하세요.
           </p>
         )}
       </div>

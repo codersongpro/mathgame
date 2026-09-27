@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-/** I·O·0·1처럼 혼동하기 쉬운 문자를 뺀 여섯 자리 방 코드만 허용합니다. */
-export const RoomCodeSchema = z.string().regex(/^[A-HJ-NP-Z2-9]{6}$/);
+/** 앞의 0도 방 코드의 일부이므로 숫자로 변환하지 않고 정확히 여섯 자리 문자열로 검증합니다. */
+export const RoomCodeSchema = z.string().regex(/^[0-9]{6}$/);
 
 /** 임시 별명은 2~12자이며 제어 문자를 포함할 수 없습니다. */
 export const NicknameSchema = z
@@ -27,6 +27,16 @@ const InputMessageSchema = z
   })
   .strict();
 
+/** 거품 행동은 요청만 전달하며 위치와 포획 결과는 서버가 정합니다. */
+const ActionMessageSchema = z
+  .object({
+    type: z.literal("action"),
+    sequence: z.number().int().nonnegative(),
+    kind: z.enum(["fire", "pop"]),
+    direction: z.union([z.literal(-1), z.literal(1)]),
+  })
+  .strict();
+
 const PingMessageSchema = z
   .object({
     type: z.literal("ping"),
@@ -37,6 +47,7 @@ const PingMessageSchema = z
 export const ClientMessageSchema = z.discriminatedUnion("type", [
   JoinMessageSchema,
   InputMessageSchema,
+  ActionMessageSchema,
   PingMessageSchema,
 ]);
 
@@ -77,6 +88,30 @@ const SnapshotMessageSchema = z
   })
   .strict();
 
+const CombatMessageSchema = z
+  .object({
+    type: z.literal("combat"),
+    serverTick: z.number().int().nonnegative(),
+    monsters: z.array(
+      z.object({
+        id: z.string().min(1),
+        x: z.number().finite(),
+        y: z.number().finite(),
+        trapped: z.boolean(),
+      }).strict(),
+    ).max(8),
+    bubbles: z.array(
+      z.object({
+        id: z.string().min(1),
+        x: z.number().finite(),
+        y: z.number().finite(),
+        trappedMonsterId: z.string().min(1).nullable(),
+      }).strict(),
+    ).max(80),
+    capturedCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
 const PongMessageSchema = z
   .object({
     type: z.literal("pong"),
@@ -96,6 +131,7 @@ const ErrorMessageSchema = z
 export const ServerMessageSchema = z.discriminatedUnion("type", [
   JoinedMessageSchema,
   SnapshotMessageSchema,
+  CombatMessageSchema,
   PongMessageSchema,
   ErrorMessageSchema,
 ]);

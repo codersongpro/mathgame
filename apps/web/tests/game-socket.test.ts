@@ -64,7 +64,7 @@ class FakeWebSocket {
 function createOptions(overrides: Partial<GameSocketOptions> = {}): GameSocketOptions {
   return {
     url: "ws://127.0.0.1:8787",
-    room: "B7K9Q2",
+    room: "012345",
     nickname: "별빛토끼",
     WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
     storage: new FakeStorage(),
@@ -73,6 +73,20 @@ function createOptions(overrides: Partial<GameSocketOptions> = {}): GameSocketOp
 }
 
 describe("GameSocket", () => {
+  it("서버가 연결된 뒤에만 검증된 거품 행동을 보낸다", () => {
+    FakeWebSocket.instances = [];
+    const socket = new GameSocket(createOptions());
+    socket.connect();
+    const webSocket = FakeWebSocket.instances[0];
+    const action = { type: "action" as const, sequence: 1, kind: "fire" as const, direction: 1 as const };
+
+    expect(socket.sendAction(action)).toBe(false);
+    webSocket?.open();
+    expect(socket.sendAction(action)).toBe(true);
+    expect(webSocket?.sent.at(-1)).toBe(JSON.stringify(action));
+    expect(socket.sendAction({ ...action, x: 999 } as typeof action)).toBe(false);
+  });
+
   it("연결 직후 join을 첫 메시지로 보낸다", () => {
     FakeWebSocket.instances = [];
     const socket = new GameSocket(createOptions());

@@ -4,8 +4,15 @@ import {
   SNAPSHOT_RATE,
   TICK_RATE,
   RoomRoster,
+  createMonster,
+  fireBubble,
+  monsterLimit,
+  popTrappedBubble,
   selectMapTier,
+  stepCombat,
   stepPlayer,
+  type CombatBubble,
+  type CombatMonster,
   type MapTier,
   type PlayerInput,
   type PlayerSimulationState,
@@ -26,6 +33,7 @@ type ConnectionAttachment = {
 
 type ConnectionState = ConnectionAttachment & {
   limiter: InputRateLimiter;
+  lastActionSequence: number;
 };
 
 type Checkpoint = {
@@ -40,6 +48,11 @@ type Checkpoint = {
     grounded: boolean;
   }>;
   fixedMapTier: MapTier | null;
+  monsters?: CombatMonster[];
+  bubbles?: CombatBubble[];
+  capturedCount?: number;
+  nextMonsterIndex?: number;
+  nextBubbleIndex?: number;
   updatedAt: number;
 };
 
@@ -69,6 +82,12 @@ export class GameRoom extends DurableObject<Env> {
   readonly #connections = new Map<WebSocket, ConnectionState>();
   readonly #playerStates = new Map<string, PlayerSimulationState>();
   readonly #inputs = new Map<string, PlayerInput>();
+  readonly #lastFireTick = new Map<string, number>();
+  #monsters: CombatMonster[] = [];
+  #bubbles: CombatBubble[] = [];
+  #capturedCount = 0;
+  #nextMonsterIndex = 0;
+  #nextBubbleIndex = 0;
   #serverTick = 0;
   #fixedMapTier: MapTier | null = null;
   #timer: ReturnType<typeof setTimeout> | null = null;
@@ -79,7 +98,11 @@ export class GameRoom extends DurableObject<Env> {
     for (const socket of this.ctx.getWebSockets()) {
       const attachment = socket.deserializeAttachment() as ConnectionAttachment | null;
       if (!attachment) continue;
-      this.#connections.set(socket, { ...attachment, limiter: new InputRateLimiter() });
+      this.#connections.set(socket, {
+        ...attachment,
+        limiter: new InputRateLimiter(),
+        lastActionSequence: -1,
+      });
     }
 
     this.ctx.blockConcurrencyWhile(async () => {
@@ -87,6 +110,11 @@ export class GameRoom extends DurableObject<Env> {
       if (!checkpoint) return;
       this.#serverTick = checkpoint.serverTick;
       this.#fixedMapTier = checkpoint.fixedMapTier;
+      this.#monsters = checkpoint.monsters ?? [];
+      this.#bubbles = checkpoint.bubbles ?? [];
+      this.#capturedCount = checkpoint.capturedCount ?? 0;
+      this.#nextMonsterIndex = checkpoint.nextMonsterIndex ?? 0;
+      this.#nextBubbleIndex = checkpoint.nextBubbleIndex ?? 0;
       this.#roster.restore(checkpoint.roster);
       for (const player of checkpoint.players) {
         this.#playerStates.set(player.id, {
@@ -114,6 +142,7 @@ export class GameRoom extends DurableObject<Env> {
       connectionId: crypto.randomUUID(),
       playerId: null,
       limiter: new InputRateLimiter(),
+      lastActionSequence: -1,
     };
 
     this.ctx.acceptWebSocket(server);
@@ -192,6 +221,7 @@ export class GameRoom extends DurableObject<Env> {
         axis: 0,
         jump: false,
       });
+      this.#ensureMonsterPopulation();
       this.#send(socket, {
         type: "joined",
         playerId: joined.player.id,
@@ -218,13 +248,44 @@ export class GameRoom extends DurableObject<Env> {
       this.#fixedMapTier = selectMapTier(this.#connectedPlayerCount());
       await this.#persistCheckpoint();
     }
+    if (message.type === "action") {
+      if (message.sequence <= connection.lastActionSequence) return;
+      connection.lastActionSequence = message.sequence;
+      const player = this.#playerStates.get(connection.playerId);
+      if (!player) return;
+
+      if (message.kind === "fire") {
+        const lastFireTick = this.#lastFireTick.get(connection.playerId) ?? -TICK_RATE;
+        if (this.#serverTick - lastFireTick < TICK_RATE / 2) return;
+        this.#lastFireTick.set(connection.playerId, this.#serverTick);
+        this.#nextBubbleIndex += 1;
+        this.#bubbles.push(
+          fireBubble(
+            `bubble-${this.#nextBubbleIndex}`,
+            connection.playerId,
+            player.x,
+            player.y,
+            message.direction,
+            this.#serverTick,
+          ),
+        );
+      } else {
+        const result = popTrappedBubble(this.#monsters, this.#bubbles, player.x, player.y);
+        this.#monsters = result.monsters;
+        this.#bubbles = result.bubbles;
+        if (result.captured) this.#capturedCount += 1;
+      }
+      await this.#persistCheckpoint();
+      return;
+    }
+
     this.#inputs.set(connection.playerId, message);
   }
 
   async webSocketClose(
     socket: WebSocket,
-    code: number,
-    reason: string,
+    _code: number,
+    _reason: string,
     _wasClean: boolean,
   ): Promise<void> {
     const connection = this.#connections.get(socket);
@@ -240,11 +301,12 @@ export class GameRoom extends DurableObject<Env> {
       await this.#persistCheckpoint();
     }
 
-    socket.close(code, reason);
+    // 종료 이벤트 뒤에는 이미 닫힌 소켓이므로 다시 close(1006)를 호출하지 않습니다.
   }
 
   async webSocketError(socket: WebSocket): Promise<void> {
     await this.webSocketClose(socket, 1011, "socket error", false);
+    if (socket.readyState === WebSocket.OPEN) socket.close(1011, "socket error");
   }
 
   #startLoop(): void {
@@ -274,6 +336,10 @@ export class GameRoom extends DurableObject<Env> {
       this.#playerStates.set(player.id, stepPlayer(state, input, 1 / TICK_RATE));
       this.#inputs.set(player.id, { ...input, jump: false });
     }
+
+    const combat = stepCombat(this.#monsters, this.#bubbles, this.#serverTick);
+    this.#monsters = combat.monsters;
+    this.#bubbles = combat.bubbles;
 
     if (this.#serverTick % SNAPSHOT_EVERY_TICKS === 0) {
       this.#broadcastSnapshot();
@@ -309,8 +375,32 @@ export class GameRoom extends DurableObject<Env> {
       players: publicPlayers,
     };
 
+    // 별도 메시지라서 이전 웹 버전도 기존 위치 스냅샷을 계속 읽을 수 있습니다.
+    const combat: ServerMessage = {
+      type: "combat",
+      serverTick: this.#serverTick,
+      monsters: this.#monsters.map(({ id, x, y, trapped }) => ({ id, x, y, trapped })),
+      bubbles: this.#bubbles.map(({ id, x, y, trappedMonsterId }) => ({
+        id,
+        x,
+        y,
+        trappedMonsterId,
+      })),
+      capturedCount: this.#capturedCount,
+    };
+
     for (const [socket, connection] of this.#connections) {
-      if (connection.playerId) this.#send(socket, snapshot);
+      if (!connection.playerId) continue;
+      this.#send(socket, snapshot);
+      this.#send(socket, combat);
+    }
+  }
+
+  #ensureMonsterPopulation(): void {
+    const target = monsterLimit(this.#connectedPlayerCount());
+    while (this.#nextMonsterIndex < target) {
+      this.#monsters.push(createMonster(this.#nextMonsterIndex));
+      this.#nextMonsterIndex += 1;
     }
   }
 
@@ -330,6 +420,7 @@ export class GameRoom extends DurableObject<Env> {
       if (remainingIds.has(playerId)) continue;
       this.#playerStates.delete(playerId);
       this.#inputs.delete(playerId);
+      this.#lastFireTick.delete(playerId);
     }
   }
 
@@ -339,6 +430,11 @@ export class GameRoom extends DurableObject<Env> {
       roster: this.#roster.players(),
       players: [...this.#playerStates].map(([id, state]) => ({ id, ...state })),
       fixedMapTier: this.#fixedMapTier,
+      monsters: this.#monsters,
+      bubbles: this.#bubbles,
+      capturedCount: this.#capturedCount,
+      nextMonsterIndex: this.#nextMonsterIndex,
+      nextBubbleIndex: this.#nextBubbleIndex,
       updatedAt: Date.now(),
     };
     await this.ctx.storage.put("checkpoint", checkpoint);

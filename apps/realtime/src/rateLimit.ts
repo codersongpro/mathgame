@@ -2,7 +2,7 @@ const WINDOW_MS = 1_000;
 const MAX_INPUTS_PER_WINDOW = 30;
 const PENALTY_MS = 5_000;
 
-/** 각 WebSocket 연결의 이동 입력만 제한하는 1초 슬라이딩 윈도우입니다. */
+/** 각 WebSocket 연결의 이동·전투 입력을 제한하는 1초 슬라이딩 윈도우입니다. */
 export class InputRateLimiter {
   readonly #acceptedAt: number[] = [];
   #penaltyUntil = 0;

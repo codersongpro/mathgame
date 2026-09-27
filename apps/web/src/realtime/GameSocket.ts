@@ -140,6 +140,15 @@ export class GameSocket {
     return true;
   }
 
+  /** 좌표 없이 행동 의도만 보내며, 서버가 위치와 결과를 판정합니다. */
+  sendAction(message: Extract<ClientMessage, { type: "action" }>) {
+    const parsed = ClientMessageSchema.safeParse(message);
+    if (!parsed.success || this.#socket?.readyState !== this.#WebSocketImpl.OPEN) return false;
+
+    this.#socket.send(JSON.stringify(parsed.data));
+    return true;
+  }
+
   subscribe(listener: MessageListener) {
     this.#messageListeners.add(listener);
     return () => this.#messageListeners.delete(listener);

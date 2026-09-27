@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("열 명이 같은 방에서 한 학생의 이동을 함께 본다", async ({ browser }) => {
-  const room = "C7K9Q2";
+  const room = "736428";
   const contexts = await Promise.all(
     Array.from({ length: 10 }, () => browser.newContext({ viewport: { width: 1_024, height: 600 } })),
   );

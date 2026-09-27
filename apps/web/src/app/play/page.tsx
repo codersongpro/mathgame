@@ -9,7 +9,7 @@ type PlayPageProps = {
 
 export default async function PlayPage({ searchParams }: PlayPageProps): Promise<ReactElement> {
   const params = await searchParams;
-  const room = typeof params.room === "string" ? params.room.toUpperCase() : "";
+  const room = typeof params.room === "string" ? params.room.trim() : "";
   const nickname = typeof params.nickname === "string" ? params.nickname.trim() : "";
 
   if (!RoomCodeSchema.safeParse(room).success || !NicknameSchema.safeParse(nickname).success) {
