@@ -1,8 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   FLOOR_Y,
+  CORRECT_ANSWER_SCORE,
+  MONSTER_CAPTURE_SCORE,
   SNAPSHOT_RATE,
-  STAGE_ONE_TARGET_SECONDS,
   TICK_RATE,
   RoomRoster,
   createMathQuestion,
@@ -12,7 +13,7 @@ import {
   popTrappedBubble,
   selectMapTier,
   stageElapsedSeconds,
-  stageOneComplete,
+  stageGoalReached,
   stageOneGoals,
   stepCombat,
   stepPlayer,
@@ -26,7 +27,9 @@ import {
 } from "@bubble-semble/game-core";
 import {
   ClientMessageSchema,
+  RoomStageSettingsSchema,
   type PublicPlayerState,
+  type RoomStageSettings,
   type ServerMessage,
 } from "@bubble-semble/shared";
 import type { Env } from "./index";
@@ -64,12 +67,16 @@ type Checkpoint = {
   stageStartedAtTick?: number | null;
   stageClearedAtTick?: number | null;
   stagePlayerCount?: number | null;
+  stageNumber?: 1 | 2;
+  stageScore?: number;
+  teamSolvedCount?: number;
   updatedAt: number;
 };
 
 type TeacherRoomRecord = {
   teacherTokenHash: string;
   expiresAt: number;
+  settings?: RoomStageSettings;
 };
 
 type PersonalQuiz = {
@@ -123,6 +130,10 @@ export class GameRoom extends DurableObject<Env> {
   #stageStartedAtTick: number | null = null;
   #stageClearedAtTick: number | null = null;
   #stagePlayerCount: number | null = null;
+  #stageNumber: 1 | 2 = 1;
+  // 학생이 보낸 점수 값은 받지 않고 서버가 확인한 정답·포획만 누적합니다.
+  #stageScore = 0;
+  #settings: RoomStageSettings = RoomStageSettingsSchema.parse({});
   #teamSolvedCount = 0;
   #timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -140,6 +151,8 @@ export class GameRoom extends DurableObject<Env> {
     }
 
     this.ctx.blockConcurrencyWhile(async () => {
+      const room = await this.ctx.storage.get<TeacherRoomRecord>("teacherRoom");
+      if (room?.settings) this.#settings = room.settings;
       const checkpoint = await this.ctx.storage.get<Checkpoint>("checkpoint");
       if (!checkpoint) return;
       this.#serverTick = checkpoint.serverTick;
@@ -154,6 +167,9 @@ export class GameRoom extends DurableObject<Env> {
       this.#stageStartedAtTick = checkpoint.stageStartedAtTick ?? null;
       this.#stageClearedAtTick = checkpoint.stageClearedAtTick ?? null;
       this.#stagePlayerCount = checkpoint.stagePlayerCount ?? null;
+      this.#stageNumber = checkpoint.stageNumber ?? 1;
+      this.#stageScore = checkpoint.stageScore ?? 0;
+      this.#teamSolvedCount = checkpoint.teamSolvedCount ?? 0;
       this.#roster.restore(checkpoint.roster);
       for (const player of checkpoint.players) {
         this.#playerStates.set(player.id, {
@@ -174,6 +190,9 @@ export class GameRoom extends DurableObject<Env> {
       if (!token || !/^[a-f0-9]{64}$/.test(token)) {
         return Response.json({ code: "INVALID_TOKEN" }, { status: 400 });
       }
+      const body = await request.json().catch(() => null) as { settings?: unknown } | null;
+      const settings = RoomStageSettingsSchema.safeParse(body?.settings ?? {});
+      if (!settings.success) return Response.json({ code: "INVALID_GOALS" }, { status: 400 });
       const now = Date.now();
       const teacherTokenHash = await digestToken(token);
       const created = await this.ctx.storage.transaction(async (storage) => {
@@ -181,9 +200,11 @@ export class GameRoom extends DurableObject<Env> {
         await storage.put("teacherRoom", {
           teacherTokenHash,
           expiresAt: now + ROOM_LIFETIME_MS,
+          settings: settings.data,
         } satisfies TeacherRoomRecord);
         return true;
       });
+      if (created) this.#settings = settings.data;
       return created
         ? Response.json({ expiresAt: now + ROOM_LIFETIME_MS }, { status: 201 })
         : Response.json({ code: "ROOM_EXISTS" }, { status: 409 });
@@ -203,6 +224,7 @@ export class GameRoom extends DurableObject<Env> {
       this.#pruneExpiredPlayers(Date.now());
       return Response.json({
         expiresAt: room.expiresAt,
+        settings: this.#settings,
         capturedCount: this.#capturedCount,
         stage: this.#stageMessage(),
         players: this.#roster.players().map(({ id, nickname, connected }) => ({
@@ -347,8 +369,10 @@ export class GameRoom extends DurableObject<Env> {
 
       const correct = message.choice === quiz.question.correctAnswer;
       if (correct) {
+        this.#startStage();
         quiz.solvedCount += 1;
         this.#teamSolvedCount += 1;
+        this.#stageScore += CORRECT_ANSWER_SCORE;
         quiz.completed = true;
         quiz.boostedUntilTick = this.#serverTick + TICK_RATE * 5;
       } else {
@@ -368,7 +392,10 @@ export class GameRoom extends DurableObject<Env> {
         ...(!correct && quiz.completed ? { answer: quiz.question.correctAnswer } : {}),
       };
       this.#send(socket, quiz.lastFeedback);
-      if (correct) await this.#maybeClearStage();
+      if (correct) {
+        await this.#maybeClearStage();
+        await this.#persistCheckpoint();
+      }
       return;
     }
 
@@ -382,12 +409,7 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
-    if (this.#fixedMapTier === null) {
-      this.#fixedMapTier = selectMapTier(this.#connectedPlayerCount());
-      this.#stageStartedAtTick = this.#serverTick;
-      this.#stagePlayerCount = this.#connectedPlayerCount();
-      await this.#persistCheckpoint();
-    }
+    this.#startStage();
 
     if (message.type === "action") {
       if (message.sequence <= connection.lastActionSequence) return;
@@ -415,7 +437,10 @@ export class GameRoom extends DurableObject<Env> {
         const result = popTrappedBubble(this.#monsters, this.#bubbles, player.x, player.y);
         this.#monsters = result.monsters;
         this.#bubbles = result.bubbles;
-        if (result.captured) this.#capturedCount += 1;
+        if (result.captured) {
+          this.#capturedCount += 1;
+          this.#stageScore += MONSTER_CAPTURE_SCORE;
+        }
       }
       await this.#maybeClearStage();
       await this.#persistCheckpoint();
@@ -489,6 +514,11 @@ export class GameRoom extends DurableObject<Env> {
     if (this.#serverTick % SNAPSHOT_EVERY_TICKS === 0) {
       this.#broadcastSnapshot();
     }
+    if (this.#serverTick % TICK_RATE === 0) await this.#maybeClearStage();
+    if (this.#stageNumber === 1 && this.#stageClearedAtTick !== null &&
+      this.#serverTick - this.#stageClearedAtTick >= TICK_RATE * 3) {
+      await this.#advanceStage();
+    }
     if (this.#serverTick % TICK_RATE === 0) await this.#persistCheckpoint();
 
     this.#startLoop();
@@ -559,6 +589,14 @@ export class GameRoom extends DurableObject<Env> {
     return Math.max(1, this.#roster.players().filter((player) => player.connected).length);
   }
 
+  #startStage(): void {
+    // 첫 유효한 행동 또는 정답 순간을 시작점으로 고정합니다.
+    if (this.#stageStartedAtTick !== null) return;
+    this.#fixedMapTier ??= selectMapTier(this.#connectedPlayerCount());
+    this.#stageStartedAtTick = this.#serverTick;
+    this.#stagePlayerCount = this.#connectedPlayerCount();
+  }
+
   #pruneExpiredPlayers(now: number): void {
     const beforeIds = this.#roster.players().map((player) => player.id);
     if (this.#roster.pruneExpired(now) === 0) return;
@@ -588,6 +626,9 @@ export class GameRoom extends DurableObject<Env> {
       stageStartedAtTick: this.#stageStartedAtTick,
       stageClearedAtTick: this.#stageClearedAtTick,
       stagePlayerCount: this.#stagePlayerCount,
+      stageNumber: this.#stageNumber,
+      stageScore: this.#stageScore,
+      teamSolvedCount: this.#teamSolvedCount,
       updatedAt: Date.now(),
     };
     await this.ctx.storage.put("checkpoint", checkpoint);
@@ -619,33 +660,63 @@ export class GameRoom extends DurableObject<Env> {
 
   #stageMessage(): Extract<ServerMessage, { type: "stage" }> {
     const goals = stageOneGoals(this.#stagePlayerCount ?? this.#connectedPlayerCount());
+    const configured = this.#stageNumber === 1 ? this.#settings.stage1 : this.#settings.stage2;
     return {
       type: "stage",
-      stage: 1,
+      stage: this.#stageNumber,
       status: this.#stageClearedAtTick !== null
         ? "cleared" : this.#stageStartedAtTick !== null ? "active" : "waiting",
       capturedCount: this.#capturedCount,
       captureGoal: goals.captureGoal,
-      solvedCount: this.#stageClearedAtTick !== null
-        ? Math.max(this.#teamSolvedCount, goals.questionGoal) : this.#teamSolvedCount,
+      solvedCount: this.#teamSolvedCount,
       questionGoal: goals.questionGoal,
       elapsedSeconds: this.#stageStartedAtTick === null ? 0 : stageElapsedSeconds(
         this.#stageStartedAtTick,
         this.#stageClearedAtTick ?? this.#serverTick,
       ),
-      targetSeconds: STAGE_ONE_TARGET_SECONDS,
+      targetSeconds: configured.targetSeconds,
+      score: this.#stageScore,
+      targetScore: configured.targetScore,
+      clearMode: configured.clearMode,
     };
   }
 
   async #maybeClearStage(): Promise<void> {
     if (this.#stageStartedAtTick === null || this.#stageClearedAtTick !== null) return;
-    const goals = stageOneGoals(this.#stagePlayerCount ?? 1);
-    if (!stageOneComplete(goals, this.#capturedCount, this.#teamSolvedCount)) return;
+    const configured = this.#stageNumber === 1 ? this.#settings.stage1 : this.#settings.stage2;
+    const elapsed = stageElapsedSeconds(this.#stageStartedAtTick, this.#serverTick);
+    if (!stageGoalReached(configured, elapsed, this.#stageScore)) return;
     this.#stageClearedAtTick = this.#serverTick;
     await this.#persistCheckpoint();
     for (const [socket, connection] of this.#connections) {
       if (connection.playerId) this.#send(socket, this.#stageMessage());
     }
+  }
+
+  /** 전원에게 같은 새 문제와 몬스터 무리를 보내되 방 연결은 유지합니다. */
+  async #advanceStage(): Promise<void> {
+    this.#stageNumber = 2;
+    this.#stageStartedAtTick = this.#serverTick;
+    this.#stageClearedAtTick = null;
+    this.#stagePlayerCount = this.#connectedPlayerCount();
+    this.#stageScore = 0;
+    this.#teamSolvedCount = 0;
+    this.#capturedCount = 0;
+    this.#monsters = [];
+    this.#bubbles = [];
+    this.#nextMonsterIndex = 0;
+    this.#ensureMonsterPopulation();
+    for (const player of this.#roster.players()) {
+      const previous = this.#quizzes.get(player.id);
+      this.#createQuiz(player.id, previous?.solvedCount ?? 0);
+    }
+    for (const [socket, connection] of this.#connections) {
+      if (!connection.playerId) continue;
+      const quiz = this.#quizzes.get(connection.playerId);
+      if (quiz) this.#sendQuestion(socket, quiz);
+      this.#send(socket, this.#stageMessage());
+    }
+    await this.#persistCheckpoint();
   }
 
   #send(socket: WebSocket, message: ServerMessage): void {

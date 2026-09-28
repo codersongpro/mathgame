@@ -1,4 +1,4 @@
-import { RoomCodeSchema } from "@bubble-semble/shared";
+import { RoomCodeSchema, RoomStageSettingsSchema } from "@bubble-semble/shared";
 import type { GameRoom } from "./GameRoom";
 
 export { GameRoom } from "./GameRoom";
@@ -48,6 +48,10 @@ export default {
         return jsonError("UNAUTHORIZED", "교사 접속키를 확인해 주세요.", 401);
       }
 
+      const body = await request.json().catch(() => null) as { settings?: unknown } | null;
+      const settings = RoomStageSettingsSchema.safeParse(body?.settings ?? {});
+      if (!settings.success) return jsonError("INVALID_GOALS", "스테이지 목표값을 확인해 주세요.", 400);
+
       for (let attempt = 0; attempt < 20; attempt += 1) {
         const roomCode = randomRoomCode();
         const teacherToken = randomTeacherToken();
@@ -56,6 +60,7 @@ export default {
           new Request("https://room.internal/internal/create", {
             method: "POST",
             headers: { "X-Teacher-Token": teacherToken },
+            body: JSON.stringify({ settings: settings.data }),
           }),
         );
         if (created.status === 409) continue;

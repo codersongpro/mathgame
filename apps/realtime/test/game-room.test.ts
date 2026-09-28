@@ -6,12 +6,13 @@ import { InputRateLimiter } from "../src/rateLimit";
 const createdRooms = new Set<string>();
 const testTeacherToken = "a".repeat(64);
 
-async function createTestRoom(roomName: string): Promise<void> {
+async function createTestRoom(roomName: string, settings: unknown = {}): Promise<void> {
   if (createdRooms.has(roomName)) return;
   const id = env.GAME_ROOM.idFromName(roomName);
   const response = await env.GAME_ROOM.get(id).fetch("https://room.internal/internal/create", {
     method: "POST",
     headers: { "X-Teacher-Token": testTeacherToken },
+    body: JSON.stringify({ settings }),
   });
   expect(response.status).toBe(201);
   createdRooms.add(roomName);
@@ -21,12 +22,13 @@ function waitForMessage(
   socket: WebSocket,
   predicate: (message: ServerMessage) => boolean,
   label = "WebSocket",
+  timeoutMs = 2_000,
 ): Promise<ServerMessage> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       socket.removeEventListener("message", onMessage);
       reject(new Error(`${label} 응답 시간이 초과됐습니다.`));
-    }, 2_000);
+    }, timeoutMs);
 
     function onMessage(event: MessageEvent) {
       const parsed = ServerMessageSchema.safeParse(JSON.parse(String(event.data)));
@@ -114,6 +116,7 @@ describe("GameRoom", () => {
 
   it("솔로 방도 거품 포획 1회와 정답 2개를 채우면 첫 스테이지를 클리어한다", async () => {
     const roomName = `stage-clear-${crypto.randomUUID()}`;
+    await createTestRoom(roomName, { stage1: { targetScore: 40, clearMode: "either" } });
     const player = await joinSocket(roomName, "학생1");
     try {
       const nearMonster = waitForMessage(player.socket, (message) =>
@@ -166,11 +169,39 @@ describe("GameRoom", () => {
       player.socket.send(JSON.stringify({ type: "answer", questionId: next.questionId, choice: answerFromPrompt(next.prompt) }));
       await expect(cleared).resolves.toMatchObject({
         stage: 1, capturedCount: 1, captureGoal: 1, solvedCount: 2, questionGoal: 2,
+        score: 40, targetScore: 40, clearMode: "either",
       });
     } finally {
       player.socket.close(1000, "test complete");
     }
   });
+
+  it("목표 점수를 채우면 두 학생에게 클리어와 다음 스테이지를 함께 전송한다", async () => {
+    const roomName = `stage-two-${crypto.randomUUID()}`;
+    await createTestRoom(roomName, {
+      stage1: { targetScore: 10, clearMode: "either" },
+      stage2: { targetSeconds: 180, targetScore: 200, clearMode: "both" },
+    });
+    const first = await joinSocket(roomName, "학생1");
+    const second = await joinSocket(roomName, "학생2");
+    try {
+      const firstClear = waitForMessage(first.socket, (message) => message.type === "stage" && message.stage === 1 && message.status === "cleared");
+      const secondClear = waitForMessage(second.socket, (message) => message.type === "stage" && message.stage === 1 && message.status === "cleared");
+      const firstNext = waitForMessage(first.socket, (message) => message.type === "stage" && message.stage === 2, "첫 학생 2스테이지", 6_000);
+      const secondNext = waitForMessage(second.socket, (message) => message.type === "stage" && message.stage === 2, "둘째 학생 2스테이지", 6_000);
+      first.socket.send(JSON.stringify({
+        type: "answer", questionId: first.question.questionId,
+        choice: answerFromPrompt(first.question.prompt),
+      }));
+      await Promise.all([firstClear, secondClear]);
+      const [one, two] = await Promise.all([firstNext, secondNext]);
+      expect(one).toMatchObject({ status: "active", stage: 2, score: 0, targetSeconds: 180, targetScore: 200 });
+      expect(two).toMatchObject({ status: "active", stage: 2, score: 0, targetSeconds: 180, targetScore: 200 });
+    } finally {
+      first.socket.close(1000, "test complete");
+      second.socket.close(1000, "test complete");
+    }
+  }, 10_000);
 
   it("학생마다 다른 문제를 보내고 정답은 서버에서 판정해 교사에게 정답 수만 공개한다", async () => {
     const roomName = `quiz-${crypto.randomUUID()}`;

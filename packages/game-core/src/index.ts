@@ -7,3 +7,4 @@ export * from "./roomRoster";
 export * from "./combat";
 export * from "./quiz";
 export * from "./stageOne";
+export * from "./stageGoals";

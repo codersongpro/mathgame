@@ -1,4 +1,4 @@
-import { RoomCodeSchema } from "@bubble-semble/shared";
+import { RoomCodeSchema, RoomStageSettingsSchema } from "@bubble-semble/shared";
 import { noStoreJson, workerUrl } from "../../../../teacher/workerUrl";
 
 /** 교사 접속키는 이 요청 동안만 사용하고 브라우저 저장소나 응답에는 되돌려주지 않습니다. */
@@ -6,16 +6,20 @@ export async function POST(request: Request): Promise<Response> {
   const url = workerUrl("/teacher/rooms");
   if (!url) return noStoreJson({ message: "실시간 서버 주소가 설정되지 않았습니다." }, 503);
 
-  const body = await request.json().catch(() => null) as { accessKey?: unknown } | null;
+  const body = await request.json().catch(() => null) as { accessKey?: unknown; settings?: unknown } | null;
   const accessKey = body?.accessKey;
   if (typeof accessKey !== "string" || accessKey.length < 1 || accessKey.length > 256) {
     return noStoreJson({ message: "교사 접속키를 입력해 주세요." }, 400);
   }
 
+  const settings = RoomStageSettingsSchema.safeParse(body?.settings ?? {});
+  if (!settings.success) return noStoreJson({ message: "스테이지 목표값을 확인해 주세요." }, 400);
+
   try {
     const upstream = await fetch(url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${accessKey}` },
+      headers: { Authorization: `Bearer ${accessKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ settings: settings.data }),
       cache: "no-store",
     });
     if (!upstream.ok) {

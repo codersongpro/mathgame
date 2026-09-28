@@ -17,6 +17,18 @@ describe("교사 전용 API", () => {
     expect(response.status).toBe(400);
   });
 
+  it("범위를 벗어난 목표값은 Worker에 전달하지 않는다", async () => {
+    vi.stubEnv("NEXT_PUBLIC_REALTIME_URL", "wss://realtime.example");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await POST(new Request("https://web.example/api/teacher/rooms", {
+      method: "POST",
+      body: JSON.stringify({ accessKey: "teacher-secret", settings: { stage1: { targetSeconds: 0 } } }),
+    }));
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("방 발급 토큰을 HttpOnly 쿠키에만 담고 JSON·URL에는 노출하지 않는다", async () => {
     vi.stubEnv("NEXT_PUBLIC_REALTIME_URL", "wss://realtime.example");
     const token = "a".repeat(64);
@@ -36,6 +48,10 @@ describe("교사 전용 API", () => {
     expect(body).toMatchObject({ roomCode: "012345" });
     expect(JSON.stringify(body)).not.toContain(token);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://realtime.example/teacher/rooms");
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1].body).settings).toMatchObject({
+      stage1: { targetSeconds: 120, targetScore: 100, clearMode: "both" },
+      stage2: { targetSeconds: 150, targetScore: 150, clearMode: "both" },
+    });
     expect(response.headers.get("Set-Cookie")).toContain("HttpOnly; Secure; SameSite=Strict");
     expect(response.headers.get("Set-Cookie")).toContain("Path=/api/teacher/rooms/012345");
     expect(response.headers.get("Cache-Control")).toBe("no-store");

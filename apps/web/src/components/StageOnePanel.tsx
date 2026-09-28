@@ -12,10 +12,11 @@ export function StageOnePanel({ stage }: { stage: Stage | null }) {
 
   return (
     <div className="stage-progress" aria-live="polite">
-      <strong>일반 스테이지 1</strong>
-      <span>거품 포획 {stage.capturedCount}/{stage.captureGoal}</span>
-      <span>팀 정답 {stage.solvedCount}/{stage.questionGoal}</span>
-      <span>{stage.status === "waiting" ? "이동 또는 거품 버튼으로 시작" : `시간 ${clock(stage.elapsedSeconds)} / 목표 ${clock(stage.targetSeconds)}`}</span>
+      <strong>일반 스테이지 {stage.stage}</strong>
+      <span>팀 점수 {stage.score}/{stage.targetScore}점</span>
+      <span>거품 포획 {stage.capturedCount}개 · 팀 정답 {stage.solvedCount}개</span>
+      <span>{stage.status === "waiting" ? "이동·거품·문제 풀이로 시작" : `버틴 시간 ${clock(stage.elapsedSeconds)} / 목표 ${clock(stage.targetSeconds)}`}</span>
+      <span>{stage.clearMode === "both" ? "시간과 점수 모두 달성" : "시간 또는 점수 달성"}</span>
     </div>
   );
 }
@@ -23,13 +24,13 @@ export function StageOnePanel({ stage }: { stage: Stage | null }) {
 export function StageClearOverlay({ stage }: { stage: Stage | null }) {
   if (stage?.status !== "cleared") return null;
   return (
-    <section className="stage-clear" role="status" aria-label="첫 스테이지 클리어">
+    <section className="stage-clear" role="status" aria-label={`${stage.stage}스테이지 클리어`}>
       <div className="stage-clear-card">
         <p className="eyebrow">TEAM CLEAR!</p>
-        <h2>첫 스테이지 클리어!</h2>
+        <h2>{stage.stage}스테이지 클리어!</h2>
         <p>함께 거품 {stage.capturedCount}개를 포획하고 문제 {stage.solvedCount}개를 맞혔습니다.</p>
-        <p>협동 시간 {clock(stage.elapsedSeconds)} · 목표 시간 {clock(stage.targetSeconds)}</p>
-        <p>다음 스테이지는 후속 페이즈에서 열립니다.</p>
+        <p>팀 점수 {stage.score}점 · 협동 시간 {clock(stage.elapsedSeconds)}</p>
+        <p>{stage.stage === 1 ? "잠시 후 2스테이지로 함께 이동합니다." : "2스테이지까지 함께 완료했습니다!"}</p>
       </div>
     </section>
   );

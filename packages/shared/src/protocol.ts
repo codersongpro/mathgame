@@ -79,6 +79,20 @@ export type PublicPlayerState = z.infer<typeof PublicPlayerStateSchema>;
 
 export const MapTierSchema = z.enum(["small", "medium", "large", "xlarge"]);
 
+/** 교사 입력을 생략하면 스테이지별 기본 목표를 적용합니다. */
+const stageGoal = (seconds: number, score: number) => z.object({
+  targetSeconds: z.number().int().min(10).max(600).default(seconds),
+  targetScore: z.number().int().min(10).max(2000).default(score),
+  clearMode: z.enum(["both", "either"]).default("both"),
+}).strict();
+
+export const RoomStageSettingsSchema = z.object({
+  stage1: stageGoal(120, 100).prefault({}),
+  stage2: stageGoal(150, 150).prefault({}),
+}).strict();
+
+export type RoomStageSettings = z.infer<typeof RoomStageSettingsSchema>;
+
 const JoinedMessageSchema = z
   .object({
     type: z.literal("joined"),
@@ -154,14 +168,17 @@ const QuizFeedbackMessageSchema = z.object({
 /** 팀 목표는 전원에게 공유하고 개인 문제와 오답은 포함하지 않습니다. */
 const StageMessageSchema = z.object({
   type: z.literal("stage"),
-  stage: z.literal(1),
+  stage: z.union([z.literal(1), z.literal(2)]),
   status: z.enum(["waiting", "active", "cleared"]),
   capturedCount: z.number().int().nonnegative(),
   captureGoal: z.number().int().positive(),
   solvedCount: z.number().int().nonnegative(),
   questionGoal: z.number().int().positive(),
   elapsedSeconds: z.number().int().nonnegative(),
-  targetSeconds: z.literal(120),
+  targetSeconds: z.number().int().min(10).max(600),
+  score: z.number().int().nonnegative(),
+  targetScore: z.number().int().min(10).max(2000),
+  clearMode: z.enum(["both", "either"]),
 }).strict();
 
 const ErrorMessageSchema = z

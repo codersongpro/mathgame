@@ -3,6 +3,29 @@ import { describe, expect, it } from "vitest";
 import worker from "../src/index";
 
 describe("교사 방 실제 Worker·Durable Object 연결", () => {
+  it("기본 목표와 잘못된 사용자 설정을 서버에서 구분한다", async () => {
+    const runtimeEnv = { ...env, TEACHER_CREATE_KEY: "local-test-teacher-key-at-least-32" };
+    const invalid = await worker.fetch(new Request("https://worker.test/teacher/rooms", {
+      method: "POST",
+      headers: { Authorization: "Bearer local-test-teacher-key-at-least-32" },
+      body: JSON.stringify({ settings: { stage2: { targetScore: 0 } } }),
+    }), runtimeEnv);
+    expect(invalid.status).toBe(400);
+
+    const defaultRoom = await worker.fetch(new Request("https://worker.test/teacher/rooms", {
+      method: "POST",
+      headers: { Authorization: "Bearer local-test-teacher-key-at-least-32" },
+    }), runtimeEnv);
+    const { roomCode, teacherToken } = await defaultRoom.json() as { roomCode: string; teacherToken: string };
+    const status = await worker.fetch(new Request(`https://worker.test/teacher/rooms/${roomCode}`, {
+      headers: { Authorization: `Bearer ${teacherToken}` },
+    }), runtimeEnv);
+    expect(await status.json()).toMatchObject({
+      settings: { stage1: { targetSeconds: 120 }, stage2: { targetSeconds: 150 } },
+      stage: { targetSeconds: 120, targetScore: 100, clearMode: "both" },
+    });
+  });
+
   it("교사만 방을 만들고 학생은 발급된 번호로 입장하며 모니터는 토큰으로 보호한다", async () => {
     const runtimeEnv = { ...env, TEACHER_CREATE_KEY: "local-test-teacher-key-at-least-32" };
     const create = await worker.fetch(new Request("https://worker.test/teacher/rooms", {
