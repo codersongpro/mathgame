@@ -661,6 +661,25 @@ h1 {
 
 .stage-progress strong { color: var(--lemon); }
 
+.playtest-toolbar {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 8px 10px;
+  border: 2px solid var(--lemon);
+  background: var(--panel-deep);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.playtest-toolbar strong { color: var(--lemon); }
+.playtest-toolbar button,
+.playtest-toolbar a { color: var(--aqua); font: inherit; cursor: pointer; }
+.playtest-toolbar button { border: 0; background: transparent; text-decoration: underline; }
+.playtest-toolbar input { flex-basis: 100%; min-width: 0; padding: 6px; font: inherit; }
+
 .stage-clear {
   position: absolute;
   z-index: 9;

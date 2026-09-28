@@ -5,8 +5,13 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TeacherRoomPanel } from "../src/components/TeacherRoomPanel";
 
+const push = vi.fn();
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+
 afterEach(() => {
   cleanup();
+  push.mockReset();
   vi.unstubAllGlobals();
   window.history.replaceState(null, "", "/");
 });
@@ -47,5 +52,45 @@ describe("교사 방 화면", () => {
     expect(JSON.parse(fetchMock.mock.calls[0]?.[1].body).settings.stage2).not.toHaveProperty("targetScore");
     expect(window.location.search).toBe("?room=012345");
     expect(screen.getByLabelText("교사 접속키")).toHaveValue("");
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("교사 인증 뒤 시험 플레이 방을 만들고 번호 입력 없이 게임으로 이동한다", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({
+      roomCode: "000123", expiresAt: Date.now() + 10_000,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TeacherRoomPanel />);
+
+    fireEvent.change(screen.getByLabelText("교사 접속키"), { target: { value: "teacher-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "시험 플레이 시작" }));
+
+    await vi.waitFor(() => expect(push).toHaveBeenCalledTimes(1));
+    const destination = new URL(push.mock.calls[0]![0], "https://web.example");
+    expect(destination.pathname).toBe("/play");
+    expect(Object.fromEntries(destination.searchParams)).toEqual({
+      room: "000123", nickname: "교사테스트", mode: "test",
+    });
+    expect(destination.href).not.toContain("teacher-secret");
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1].body)).toMatchObject({ accessKey: "teacher-secret" });
+    expect(screen.getByLabelText("교사 접속키")).toHaveValue("");
+  });
+
+  it("접속키가 거절되면 시험 플레이로 이동하지 않는다", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ message: "교사 접속키가 올바르지 않습니다." }, { status: 401 })));
+    render(<TeacherRoomPanel />);
+    fireEvent.change(screen.getByLabelText("교사 접속키"), { target: { value: "wrong-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "시험 플레이 시작" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("교사 접속키가 올바르지 않습니다.");
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("방 발급 응답이 올바르지 않으면 임의의 주소로 이동하지 않는다", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ roomCode: "javascript:alert(1)" })));
+    render(<TeacherRoomPanel />);
+    fireEvent.change(screen.getByLabelText("교사 접속키"), { target: { value: "teacher-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "시험 플레이 시작" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("발급된 방 코드를 확인할 수 없습니다.");
+    expect(push).not.toHaveBeenCalled();
   });
 });

@@ -25,5 +25,6 @@ export default async function PlayPage({ searchParams }: PlayPageProps): Promise
     );
   }
 
-  return <GameShell room={room} nickname={nickname} />;
+  // 테스트 표시는 편의 UI만 켜며 방 입장 권한이나 게임 규칙은 바꾸지 않습니다.
+  return <GameShell room={room} nickname={nickname} testMode={params.mode === "test"} />;
 }

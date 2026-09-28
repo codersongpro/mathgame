@@ -6,6 +6,7 @@ import { useEffect, useRef } from "react";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { ReconnectOverlay } from "./ReconnectOverlay";
 import { QuizPanel } from "./QuizPanel";
+import { PlaytestToolbar } from "./PlaytestToolbar";
 import { StageClearOverlay, StageOnePanel } from "./StageOnePanel";
 import { TouchControls, type TouchInput } from "./TouchControls";
 import { useGameRoom } from "../realtime/useGameRoom";
@@ -25,7 +26,7 @@ const MAP_LABELS: Record<Snapshot["mapTier"], string> = {
   xlarge: "아주 큰 맵",
 };
 
-export function GameShell({ room, nickname }: { room: string; nickname: string }) {
+export function GameShell({ room, nickname, testMode = false }: { room: string; nickname: string; testMode?: boolean }) {
   const gameContainerRef = useRef<HTMLDivElement>(null);
   const snapshotRef = useRef<Snapshot | null>(null);
   const combatRef = useRef<Combat | null>(null);
@@ -90,6 +91,7 @@ export function GameShell({ room, nickname }: { room: string; nickname: string }
           <span>{nickname} · 포획 {combat?.capturedCount ?? 0}</span>
         </div>
         <ConnectionBanner state={connectionState} />
+        {testMode && <PlaytestToolbar room={room} />}
         <StageOnePanel stage={stage} />
         <ul className="sr-only" aria-label="연결된 친구 위치" data-testid="player-roster">
           {snapshot?.players.map((player) => (

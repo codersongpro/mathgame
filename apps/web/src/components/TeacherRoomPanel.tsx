@@ -1,6 +1,7 @@
 "use client";
 
 import { RoomCodeSchema, type RoomStageSettings, type ServerMessage } from "@bubble-semble/shared";
+import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 
 type RoomStatus = {
@@ -12,6 +13,7 @@ type RoomStatus = {
 };
 
 export function TeacherRoomPanel() {
+  const router = useRouter();
   const [accessKey, setAccessKey] = useState("");
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [status, setStatus] = useState<RoomStatus | null>(null);
@@ -51,6 +53,7 @@ export function TeacherRoomPanel() {
   async function openRoom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
+    const playtest = (event.nativeEvent as SubmitEvent).submitter?.getAttribute("data-intent") === "playtest";
     const form = new FormData(event.currentTarget);
     const optionalNumber = (name: string) => {
       const value = String(form.get(name) ?? "").trim();
@@ -78,7 +81,14 @@ export function TeacherRoomPanel() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? "방을 열지 못했습니다.");
+      if (!RoomCodeSchema.safeParse(result.roomCode).success) throw new Error("발급된 방 코드를 확인할 수 없습니다.");
       setAccessKey("");
+      if (playtest) {
+        // 공개 방 번호만 URL에 넣고, 교사 접속키와 모니터 토큰은 넣지 않습니다.
+        const query = new URLSearchParams({ room: result.roomCode, nickname: "교사테스트", mode: "test" });
+        router.push(`/play?${query.toString()}`);
+        return;
+      }
       setStatus(null);
       setRoomCode(result.roomCode);
       window.history.replaceState(null, "", `/teacher?room=${result.roomCode}`);
@@ -129,6 +139,9 @@ export function TeacherRoomPanel() {
           ))}
           <p className="field-hint">입력하지 않은 목표는 기본값을 사용합니다. 정답 10점, 몬스터 포획 20점입니다.</p>
           <button type="submit" disabled={busy}>{busy ? "방 여는 중…" : "새 방 열기"}</button>
+          <button type="submit" data-intent="playtest" disabled={busy}>
+            {busy ? "테스트 준비 중…" : "시험 플레이 시작"}
+          </button>
         </form>
 
         {error && <p className="teacher-error" role="alert">{error}</p>}
