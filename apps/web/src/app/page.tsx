@@ -32,6 +32,7 @@ export default function HomePage(): ReactElement {
         </div>
 
         <LobbyForm />
+        <a className="teacher-entry" href="/teacher">교사용 방 열기 →</a>
       </section>
     </main>
   );

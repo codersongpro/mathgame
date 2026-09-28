@@ -57,7 +57,7 @@ export function LobbyForm() {
           </p>
         ) : (
           <p className="field-hint" id="room-hint">
-            숫자 6자리를 입력하세요.
+            교사가 알려준 숫자 6자리를 입력하세요.
           </p>
         )}
       </div>

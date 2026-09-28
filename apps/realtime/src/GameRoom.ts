@@ -56,10 +56,17 @@ type Checkpoint = {
   updatedAt: number;
 };
 
+type TeacherRoomRecord = {
+  teacherTokenHash: string;
+  expiresAt: number;
+};
+
+const ROOM_LIFETIME_MS = 4 * 60 * 60 * 1_000;
+
 const TICK_INTERVAL_MS = 1_000 / TICK_RATE;
 const SNAPSHOT_EVERY_TICKS = TICK_RATE / SNAPSHOT_RATE;
 
-async function digestReconnectToken(token: string): Promise<string> {
+async function digestToken(token: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -129,6 +136,50 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    const pathname = new URL(request.url).pathname;
+    if (pathname === "/internal/create" && request.method === "POST") {
+      const token = request.headers.get("X-Teacher-Token");
+      if (!token || !/^[a-f0-9]{64}$/.test(token)) {
+        return Response.json({ code: "INVALID_TOKEN" }, { status: 400 });
+      }
+      const now = Date.now();
+      const teacherTokenHash = await digestToken(token);
+      const created = await this.ctx.storage.transaction(async (storage) => {
+        if (await storage.get<TeacherRoomRecord>("teacherRoom")) return false;
+        await storage.put("teacherRoom", {
+          teacherTokenHash,
+          expiresAt: now + ROOM_LIFETIME_MS,
+        } satisfies TeacherRoomRecord);
+        return true;
+      });
+      return created
+        ? Response.json({ expiresAt: now + ROOM_LIFETIME_MS }, { status: 201 })
+        : Response.json({ code: "ROOM_EXISTS" }, { status: 409 });
+    }
+
+    const room = await this.ctx.storage.get<TeacherRoomRecord>("teacherRoom");
+    if (!room) return Response.json({ code: "ROOM_NOT_FOUND" }, { status: 404 });
+    if (room.expiresAt <= Date.now()) {
+      return Response.json({ code: "ROOM_EXPIRED" }, { status: 410 });
+    }
+
+    if (pathname === "/internal/status" && request.method === "GET") {
+      const token = request.headers.get("Authorization")?.replace(/^Bearer /, "") ?? "";
+      if (!/^[a-f0-9]{64}$/.test(token) || (await digestToken(token)) !== room.teacherTokenHash) {
+        return Response.json({ code: "UNAUTHORIZED" }, { status: 401 });
+      }
+      this.#pruneExpiredPlayers(Date.now());
+      return Response.json({
+        expiresAt: room.expiresAt,
+        capturedCount: this.#capturedCount,
+        players: this.#roster.players().map(({ id, nickname, connected }) => ({
+          id,
+          nickname,
+          connected,
+        })),
+      }, { headers: { "Cache-Control": "no-store" } });
+    }
+
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return Response.json(
         { code: "UPGRADE_REQUIRED", message: "WebSocket 업그레이드가 필요합니다." },
@@ -190,11 +241,11 @@ export class GameRoom extends DurableObject<Env> {
 
       this.#pruneExpiredPlayers(Date.now());
       const issuedToken = crypto.randomUUID();
-      const issuedReconnectToken = await digestReconnectToken(issuedToken);
+      const issuedReconnectToken = await digestToken(issuedToken);
       const reconnectToken =
         message.reconnectToken === undefined
           ? undefined
-          : await digestReconnectToken(message.reconnectToken);
+          : await digestToken(message.reconnectToken);
       const joinRequest = {
         nickname: message.nickname,
         issuedReconnectToken,

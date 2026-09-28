@@ -22,6 +22,7 @@ describe("Bubble Semble 로비", () => {
     expect(screen.getByRole("heading", { name: "Bubble Semble" })).toBeVisible();
     expect(screen.getByLabelText("방 코드")).toBeVisible();
     expect(screen.getByLabelText("별명")).toBeVisible();
+    expect(screen.getByRole("link", { name: "교사용 방 열기 →" })).toHaveAttribute("href", "/teacher");
   });
 
   it("앞의 0을 유지하고 태블릿 숫자 키패드를 요청한다", () => {

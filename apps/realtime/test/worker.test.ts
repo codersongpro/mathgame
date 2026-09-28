@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import worker, { type Env } from "../src/index";
 
-function createFakeEnv() {
+function createFakeEnv(createCollisions = 0) {
   const requestedNames: string[] = [];
   const forwardedUrls: string[] = [];
+  let createAttempts = 0;
   const env = {
+    TEACHER_CREATE_KEY: "teacher-test-secret-at-least-32-chars",
     GAME_ROOM: {
       idFromName(name: string) {
         requestedNames.push(name);
@@ -14,6 +16,13 @@ function createFakeEnv() {
         return {
           async fetch(request: Request) {
             forwardedUrls.push(request.url);
+            if (new URL(request.url).pathname === "/internal/create") {
+              createAttempts += 1;
+              if (createAttempts <= createCollisions) {
+                return Response.json({ code: "ROOM_EXISTS" }, { status: 409 });
+              }
+              return Response.json({ expiresAt: Date.now() + 4 * 60 * 60 * 1_000 }, { status: 201 });
+            }
             return new Response("forwarded");
           },
         };
@@ -25,6 +34,41 @@ function createFakeEnv() {
 }
 
 describe("실시간 Worker 라우팅", () => {
+  it("교사 접속키가 없거나 틀리면 방을 발급하지 않는다", async () => {
+    const fake = createFakeEnv();
+    const request = new Request("https://realtime.example/teacher/rooms", { method: "POST" });
+    expect((await worker.fetch(request, { GAME_ROOM: fake.env.GAME_ROOM })).status).toBe(503);
+    expect((await worker.fetch(request, { ...fake.env, TEACHER_CREATE_KEY: "weak" })).status).toBe(503);
+    expect((await worker.fetch(request, fake.env)).status).toBe(401);
+    expect(fake.requestedNames).toEqual([]);
+  });
+
+  it("교사 접속키를 확인한 뒤 6자리 방과 별도 모니터 토큰을 발급한다", async () => {
+    const fake = createFakeEnv();
+    const response = await worker.fetch(new Request("https://realtime.example/teacher/rooms", {
+      method: "POST",
+      headers: { Authorization: "Bearer teacher-test-secret-at-least-32-chars" },
+    }), fake.env);
+    const created = (await response.json()) as { roomCode: string; teacherToken: string };
+
+    expect(response.status).toBe(201);
+    expect(created.roomCode).toMatch(/^[0-9]{6}$/);
+    expect(created.teacherToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(fake.requestedNames).toEqual([created.roomCode]);
+    expect(fake.forwardedUrls).toEqual(["https://room.internal/internal/create"]);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("이미 사용 중인 숫자가 나오면 새 방 번호를 다시 시도한다", async () => {
+    const fake = createFakeEnv(1);
+    const response = await worker.fetch(new Request("https://realtime.example/teacher/rooms", {
+      method: "POST",
+      headers: { Authorization: "Bearer teacher-test-secret-at-least-32-chars" },
+    }), fake.env);
+    expect(response.status).toBe(201);
+    expect(fake.requestedNames).toHaveLength(2);
+  });
+
   it("유효한 WebSocket 경로를 방 코드 Durable Object로 전달한다", async () => {
     const fake = createFakeEnv();
     const request = new Request("https://realtime.example/room/012345", {

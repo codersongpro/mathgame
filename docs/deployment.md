@@ -23,6 +23,8 @@ Preview 웹에는 반드시 Preview 실시간 주소를, Production 웹에는 �
 
 `NEXT_PUBLIC_REALTIME_URL`은 공개 브라우저 주소이므로 비밀은 아니지만 환경별로 반드시 분리합니다. 값은 끝의 `/room`을 제외한 `wss://...workers.dev` 형식입니다.
 
+교사 방 기능을 적용할 때에는 해당 Cloudflare Worker의 **Variables and Secrets**에서 `TEACHER_CREATE_KEY`를 Secret으로 추가합니다. Preview와 Production에는 서로 다른 **32자 이상의 무작위 값**을 사용하세요. 값이 없거나 짧으면 방 발급은 실패하며, 코드나 Vercel의 공개 환경 변수에 값을 넣지 않습니다. 교사에게는 해당 환경의 접속키만 안전한 방법으로 전달합니다.
+
 ## 3. 최초 Vercel 연결
 
 1. Vercel에서 `codersongpro/mathgame` 저장소를 가져옵니다.

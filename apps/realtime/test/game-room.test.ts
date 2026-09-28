@@ -3,6 +3,20 @@ import { ServerMessageSchema, type ServerMessage } from "@bubble-semble/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InputRateLimiter } from "../src/rateLimit";
 
+const createdRooms = new Set<string>();
+const testTeacherToken = "a".repeat(64);
+
+async function createTestRoom(roomName: string): Promise<void> {
+  if (createdRooms.has(roomName)) return;
+  const id = env.GAME_ROOM.idFromName(roomName);
+  const response = await env.GAME_ROOM.get(id).fetch("https://room.internal/internal/create", {
+    method: "POST",
+    headers: { "X-Teacher-Token": testTeacherToken },
+  });
+  expect(response.status).toBe(201);
+  createdRooms.add(roomName);
+}
+
 function waitForMessage(
   socket: WebSocket,
   predicate: (message: ServerMessage) => boolean,
@@ -27,6 +41,7 @@ function waitForMessage(
 }
 
 async function openSocket(roomName: string): Promise<WebSocket> {
+  await createTestRoom(roomName);
   const id = env.GAME_ROOM.idFromName(roomName);
   const response = await env.GAME_ROOM.get(id).fetch("https://room.internal", {
     headers: { Upgrade: "websocket" },
@@ -54,6 +69,63 @@ async function joinSocket(roomName: string, nickname: string, reconnectToken?: s
 afterEach(() => vi.restoreAllMocks());
 
 describe("GameRoom", () => {
+  it("교사가 만들지 않은 방의 WebSocket 입장을 거절한다", async () => {
+    const id = env.GAME_ROOM.idFromName(`uncreated-${crypto.randomUUID()}`);
+    const response = await env.GAME_ROOM.get(id).fetch("https://room.internal", {
+      headers: { Upgrade: "websocket" },
+    });
+    expect(response.status).toBe(404);
+  });
+
+  it("방 번호 중복을 막고 교사 토큰 없이는 현황을 공개하지 않는다", async () => {
+    const roomName = `teacher-${crypto.randomUUID()}`;
+    await createTestRoom(roomName);
+    const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomName));
+    const duplicate = await room.fetch("https://room.internal/internal/create", {
+      method: "POST",
+      headers: { "X-Teacher-Token": "b".repeat(64) },
+    });
+    expect(duplicate.status).toBe(409);
+
+    const withoutToken = await room.fetch("https://room.internal/internal/status");
+    expect(withoutToken.status).toBe(401);
+    const wrongToken = await room.fetch("https://room.internal/internal/status", {
+      headers: { Authorization: `Bearer ${"b".repeat(64)}` },
+    });
+    expect(wrongToken.status).toBe(401);
+
+    const player = await joinSocket(roomName, "별빛토끼");
+    try {
+      const status = await room.fetch("https://room.internal/internal/status", {
+        headers: { Authorization: `Bearer ${testTeacherToken}` },
+      });
+      expect(status.status).toBe(200);
+      expect(await status.json()).toMatchObject({
+        capturedCount: 0,
+        players: [{ nickname: "별빛토끼", connected: true }],
+      });
+    } finally {
+      player.socket.close(1000, "test complete");
+    }
+  });
+
+  it("발급 뒤 4시간이 지나면 새 학생 입장과 교사 조회를 중단한다", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(4_000_000);
+    const roomName = `expired-room-${crypto.randomUUID()}`;
+    await createTestRoom(roomName);
+    const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomName));
+    now.mockReturnValue(4_000_000 + 4 * 60 * 60 * 1_000 + 1);
+
+    const join = await room.fetch("https://room.internal", {
+      headers: { Upgrade: "websocket" },
+    });
+    const monitor = await room.fetch("https://room.internal/internal/status", {
+      headers: { Authorization: `Bearer ${testTeacherToken}` },
+    });
+    expect(join.status).toBe(410);
+    expect(monitor.status).toBe(410);
+  });
+
   it("열 명을 입장시키고 열한 번째를 거절하며 위조 좌표를 반영하지 않는다", async () => {
     const roomName = `room-${crypto.randomUUID()}`;
     const sockets: WebSocket[] = [];
@@ -313,6 +385,12 @@ describe("GameRoom", () => {
         "두 번째 학생 포획 결과",
       );
       expect(capturedForSecond).toMatchObject({ type: "combat", capturedCount: 1 });
+
+      const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomName));
+      const monitor = await room.fetch("https://room.internal/internal/status", {
+        headers: { Authorization: `Bearer ${testTeacherToken}` },
+      });
+      expect(await monitor.json()).toMatchObject({ capturedCount: 1 });
     } finally {
       first.socket.close(1000, "test complete");
       second.socket.close(1000, "test complete");
