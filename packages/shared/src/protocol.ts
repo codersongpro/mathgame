@@ -151,6 +151,19 @@ const QuizFeedbackMessageSchema = z.object({
   boosted: z.boolean(),
 }).strict();
 
+/** 팀 목표는 전원에게 공유하고 개인 문제와 오답은 포함하지 않습니다. */
+const StageMessageSchema = z.object({
+  type: z.literal("stage"),
+  stage: z.literal(1),
+  status: z.enum(["waiting", "active", "cleared"]),
+  capturedCount: z.number().int().nonnegative(),
+  captureGoal: z.number().int().positive(),
+  solvedCount: z.number().int().nonnegative(),
+  questionGoal: z.number().int().positive(),
+  elapsedSeconds: z.number().int().nonnegative(),
+  targetSeconds: z.literal(120),
+}).strict();
+
 const ErrorMessageSchema = z
   .object({
     type: z.literal("error"),
@@ -165,6 +178,7 @@ export const ServerMessageSchema = z.discriminatedUnion("type", [
   CombatMessageSchema,
   QuestionMessageSchema,
   QuizFeedbackMessageSchema,
+  StageMessageSchema,
   PongMessageSchema,
   ErrorMessageSchema,
 ]);

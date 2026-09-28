@@ -8,6 +8,7 @@ type SnapshotMessage = Extract<ServerMessage, { type: "snapshot" }>;
 type CombatMessage = Extract<ServerMessage, { type: "combat" }>;
 type QuestionMessage = Extract<ServerMessage, { type: "question" }>;
 type QuizFeedbackMessage = Extract<ServerMessage, { type: "quiz-feedback" }>;
+type StageMessage = Extract<ServerMessage, { type: "stage" }>;
 
 /** React 화면이 연결 상태와 마지막 서버 스냅숏을 안전하게 구독하게 합니다. */
 export function useGameRoom(url: string, room: string, nickname: string) {
@@ -17,6 +18,7 @@ export function useGameRoom(url: string, room: string, nickname: string) {
   const [combat, setCombat] = useState<CombatMessage | null>(null);
   const [question, setQuestion] = useState<QuestionMessage | null>(null);
   const [quizFeedback, setQuizFeedback] = useState<QuizFeedbackMessage | null>(null);
+  const [stage, setStage] = useState<StageMessage | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,6 +33,7 @@ export function useGameRoom(url: string, room: string, nickname: string) {
       if (state !== "online") {
         setQuestion(null);
         setQuizFeedback(null);
+        setStage(null);
       }
     });
     const unsubscribeMessage = socket.subscribe((message) => {
@@ -42,6 +45,7 @@ export function useGameRoom(url: string, room: string, nickname: string) {
         setQuizFeedback(null);
       }
       if (message.type === "quiz-feedback") setQuizFeedback(message);
+      if (message.type === "stage") setStage(message);
       if (message.type === "error") setError(message.message);
     });
 
@@ -66,5 +70,5 @@ export function useGameRoom(url: string, room: string, nickname: string) {
     return socketRef.current?.sendQuiz(message) ?? false;
   }, []);
 
-  return { connectionState, snapshot, combat, question, quizFeedback, playerId, error, sendInput, sendAction, sendQuiz };
+  return { connectionState, snapshot, combat, question, quizFeedback, stage, playerId, error, sendInput, sendAction, sendQuiz };
 }

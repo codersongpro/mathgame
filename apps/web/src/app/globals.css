@@ -439,6 +439,13 @@ h1 {
   font-weight: 800;
 }
 
+.teacher-stage {
+  padding: 10px 12px;
+  border: 2px solid var(--aqua-dark);
+  background: var(--panel-deep);
+  font-weight: 800;
+}
+
 .teacher-roster {
   display: grid;
   gap: 7px;
@@ -618,6 +625,44 @@ h1 {
 .map-status {
   background: var(--pink);
 }
+
+.stage-progress {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 18px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border: 3px solid var(--pixel-border);
+  background: var(--panel-deep);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.stage-progress strong { color: var(--lemon); }
+
+.stage-clear {
+  position: absolute;
+  z-index: 9;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(12, 9, 32, 0.82);
+}
+
+.stage-clear-card {
+  width: min(540px, 100%);
+  padding: clamp(18px, 4vw, 32px);
+  border: 5px solid var(--pixel-border);
+  background: var(--panel);
+  box-shadow: 8px 8px 0 var(--aqua-dark);
+  text-align: center;
+}
+
+.stage-clear-card h2 { margin: 10px 0; color: var(--lemon); font-size: clamp(1.5rem, 5vw, 2.5rem); }
+.stage-clear-card p { font-weight: 800; }
 
 .room-chip span,
 .roster-status span,

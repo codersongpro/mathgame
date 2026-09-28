@@ -17,4 +17,17 @@ describe("20 이내 계산 문제", () => {
       expect(operation).toBe(index % 2 === 0 ? "+" : "−");
     }
   });
+
+  it("새 방의 시드가 바뀌면 첫 문제 내용도 다양해지고 같은 시드는 재현된다", () => {
+    const firstProblems = Array.from({ length: 100 }, (_, seed) => createMathQuestion(0, "q", seed).prompt);
+    expect(new Set(firstProblems).size).toBeGreaterThan(20);
+    expect(createMathQuestion(5, "q", 1234)).toEqual(createMathQuestion(5, "q", 1234));
+  });
+
+  it("한 게임에서 이어지는 초반 12문항은 같은 식을 반복하지 않는다", () => {
+    for (let sample = 0; sample < 200; sample += 1) {
+      const prompts = Array.from({ length: 12 }, (_, index) => createMathQuestion(index, "q", sample * 97).prompt);
+      expect(new Set(prompts).size).toBe(12);
+    }
+  });
 });

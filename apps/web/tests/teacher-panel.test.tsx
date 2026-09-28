@@ -17,6 +17,11 @@ describe("교사 방 화면", () => {
       .mockResolvedValueOnce(Response.json({ roomCode: "012345", expiresAt: Date.now() + 10_000 }))
       .mockResolvedValue(Response.json({
         capturedCount: 2,
+        stage: {
+          type: "stage", stage: 1, status: "active", capturedCount: 2,
+          captureGoal: 3, solvedCount: 4, questionGoal: 5,
+          elapsedSeconds: 75, targetSeconds: 120,
+        },
         players: [{ id: "one", nickname: "별빛토끼", connected: true, solvedCount: 3 }],
       }));
     vi.stubGlobal("fetch", fetchMock);
@@ -29,6 +34,7 @@ describe("교사 방 화면", () => {
     expect(await screen.findByText("별빛토끼")).toBeVisible();
     expect(screen.getByText("2")).toBeVisible();
     expect(screen.getByText("정답 3개 · 접속 중")).toBeVisible();
+    expect(screen.getByText(/스테이지 1 진행 중 · 포획 2\/3 · 팀 정답 4\/5/)).toBeVisible();
     expect(window.location.search).toBe("?room=012345");
     expect(screen.getByLabelText("교사 접속키")).toHaveValue("");
   });

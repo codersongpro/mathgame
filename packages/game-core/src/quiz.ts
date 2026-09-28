@@ -6,13 +6,14 @@ export type MathQuestion = {
   hint: string;
 };
 
-/** 번호만 받아 20 이내의 덧셈·뺄셈과 서로 다른 네 선택지를 만듭니다. */
-export function createMathQuestion(index: number, id: string): MathQuestion {
-  const addition = index % 2 === 0;
-  const left = addition ? (index * 7) % 11 : 6 + ((index * 7) % 15);
+/** 방별 시드와 출제 순서로 20 이내의 문제와 서로 다른 네 선택지를 만듭니다. */
+export function createMathQuestion(index: number, id: string, seed = 0): MathQuestion {
+  const variant = (seed + index * 17) % 20_000;
+  const addition = variant % 2 === 0;
+  const left = addition ? (variant * 7) % 11 : 6 + ((variant * 7) % 15);
   const right = addition
-    ? (index * 11 + 3) % (21 - left)
-    : (index * 5 + 2) % (left + 1);
+    ? (variant * 11 + 3) % (21 - left)
+    : (variant * 5 + 2) % (left + 1);
   const correctAnswer = addition ? left + right : left - right;
   const choices = [correctAnswer];
 
@@ -22,7 +23,7 @@ export function createMathQuestion(index: number, id: string): MathQuestion {
     }
   }
 
-  const shift = index % choices.length;
+  const shift = variant % choices.length;
   return {
     id,
     prompt: `${left} ${addition ? "+" : "−"} ${right} = ?`,

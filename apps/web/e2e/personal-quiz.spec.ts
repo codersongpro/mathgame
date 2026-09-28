@@ -23,6 +23,7 @@ test("교사가 방을 열고 학생이 터치 문제를 풀면 정답 수가 �
     await answerButton.click();
 
     await expect(studentPage.getByText(/거품 발사가 빨라집니다/)).toBeVisible();
+    await expect(studentPage.getByText("팀 정답 1/2")).toBeVisible();
     await expect(teacherPage.getByText("정답 1개 · 접속 중")).toBeVisible();
     await studentPage.getByRole("button", { name: "다음 문제" }).click();
     await expect(studentPage.locator(".quiz-prompt")).not.toHaveText(prompt);

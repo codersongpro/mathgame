@@ -55,6 +55,7 @@ async function joinSocket(roomName: string, nickname: string, reconnectToken?: s
   const socket = await openSocket(roomName);
   const joinedMessage = waitForMessage(socket, (message) => message.type === "joined");
   const questionMessage = waitForMessage(socket, (message) => message.type === "question");
+  const stageMessage = waitForMessage(socket, (message) => message.type === "stage");
   socket.send(
     JSON.stringify({
       type: "join",
@@ -64,9 +65,11 @@ async function joinSocket(roomName: string, nickname: string, reconnectToken?: s
   );
   const joined = await joinedMessage;
   const question = await questionMessage;
+  const stage = await stageMessage;
   if (joined.type !== "joined") throw new Error("입장 응답이 아닙니다.");
   if (question.type !== "question") throw new Error("개인 문제가 아닙니다.");
-  return { socket, joined, question };
+  if (stage.type !== "stage") throw new Error("스테이지 상태가 아닙니다.");
+  return { socket, joined, question, stage };
 }
 
 function answerFromPrompt(prompt: string): number {
@@ -77,6 +80,98 @@ function answerFromPrompt(prompt: string): number {
 afterEach(() => vi.restoreAllMocks());
 
 describe("GameRoom", () => {
+  it("참가 인원으로 첫 스테이지 팀 목표를 고정하고 정답을 팀 진행도에 반영한다", async () => {
+    const roomName = `stage-goals-${crypto.randomUUID()}`;
+    const first = await joinSocket(roomName, "학생1");
+    const second = await joinSocket(roomName, "학생2");
+    const third = await joinSocket(roomName, "학생3");
+    try {
+      expect(third.stage).toMatchObject({ status: "waiting", captureGoal: 2, questionGoal: 4 });
+      const active = waitForMessage(first.socket, (message) => message.type === "stage" && message.status === "active");
+      first.socket.send(JSON.stringify({ type: "input", sequence: 1, axis: 0, jump: false }));
+      await expect(active).resolves.toMatchObject({ captureGoal: 2, questionGoal: 4, targetSeconds: 120 });
+
+      const progress = waitForMessage(first.socket, (message) => message.type === "stage" && message.solvedCount === 1);
+      first.socket.send(JSON.stringify({
+        type: "answer", questionId: first.question.questionId,
+        choice: answerFromPrompt(first.question.prompt),
+      }));
+      await expect(progress).resolves.toMatchObject({ status: "active", solvedCount: 1, questionGoal: 4 });
+
+      const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomName));
+      const monitor = await room.fetch("https://room.internal/internal/status", {
+        headers: { Authorization: `Bearer ${testTeacherToken}` },
+      });
+      expect(await monitor.json()).toMatchObject({
+        stage: { status: "active", solvedCount: 1, captureGoal: 2, questionGoal: 4 },
+      });
+    } finally {
+      first.socket.close(1000, "test complete");
+      second.socket.close(1000, "test complete");
+      third.socket.close(1000, "test complete");
+    }
+  });
+
+  it("솔로 방도 거품 포획 1회와 정답 2개를 채우면 첫 스테이지를 클리어한다", async () => {
+    const roomName = `stage-clear-${crypto.randomUUID()}`;
+    const player = await joinSocket(roomName, "학생1");
+    try {
+      const nearMonster = waitForMessage(player.socket, (message) =>
+        message.type === "snapshot" &&
+        (message.players.find((item) => item.id === player.joined.playerId)?.x ?? 0) > 285,
+      );
+      player.socket.send(JSON.stringify({ type: "input", sequence: 1, axis: 1, jump: false }));
+      await nearMonster;
+      const stopped = waitForMessage(player.socket, (message) =>
+        message.type === "snapshot" &&
+        message.players.find((item) => item.id === player.joined.playerId)?.velocityX === 0,
+      );
+      player.socket.send(JSON.stringify({ type: "input", sequence: 2, axis: 0, jump: false }));
+      await stopped;
+
+      const trapped = waitForMessage(player.socket, (message) =>
+        message.type === "combat" && message.bubbles.some((bubble) => bubble.trappedMonsterId !== null),
+      );
+      player.socket.send(JSON.stringify({ type: "action", sequence: 1, kind: "fire", direction: 1 }));
+      const trappedState = await trapped;
+      if (trappedState.type !== "combat") throw new Error("포획 상태가 아닙니다.");
+      const bubbleX = trappedState.bubbles.find((bubble) => bubble.trappedMonsterId)?.x;
+      if (bubbleX === undefined) throw new Error("포획 거품이 없습니다.");
+      const current = await waitForMessage(player.socket, (message) => message.type === "snapshot");
+      if (current.type !== "snapshot") throw new Error("위치 상태가 아닙니다.");
+      const playerX = current.players.find((item) => item.id === player.joined.playerId)?.x ?? 0;
+      if (Math.abs(playerX - bubbleX) > 50) {
+        const direction = playerX < bubbleX ? 1 : -1;
+        const close = waitForMessage(player.socket, (message) =>
+          message.type === "snapshot" &&
+          Math.abs((message.players.find((item) => item.id === player.joined.playerId)?.x ?? 0) - bubbleX) <= 50,
+        );
+        player.socket.send(JSON.stringify({ type: "input", sequence: 3, axis: direction, jump: false }));
+        await close;
+        player.socket.send(JSON.stringify({ type: "input", sequence: 4, axis: 0, jump: false }));
+      }
+
+      const captured = waitForMessage(player.socket, (message) => message.type === "stage" && message.capturedCount === 1);
+      player.socket.send(JSON.stringify({ type: "action", sequence: 2, kind: "pop", direction: 1 }));
+      await expect(captured).resolves.toMatchObject({ status: "active", captureGoal: 1 });
+
+      const firstFeedback = waitForMessage(player.socket, (message) => message.type === "quiz-feedback" && message.correct);
+      player.socket.send(JSON.stringify({ type: "answer", questionId: player.question.questionId, choice: answerFromPrompt(player.question.prompt) }));
+      await firstFeedback;
+      const secondQuestion = waitForMessage(player.socket, (message) => message.type === "question");
+      player.socket.send(JSON.stringify({ type: "next-question" }));
+      const next = await secondQuestion;
+      if (next.type !== "question") throw new Error("다음 문제가 아닙니다.");
+      const cleared = waitForMessage(player.socket, (message) => message.type === "stage" && message.status === "cleared");
+      player.socket.send(JSON.stringify({ type: "answer", questionId: next.questionId, choice: answerFromPrompt(next.prompt) }));
+      await expect(cleared).resolves.toMatchObject({
+        stage: 1, capturedCount: 1, captureGoal: 1, solvedCount: 2, questionGoal: 2,
+      });
+    } finally {
+      player.socket.close(1000, "test complete");
+    }
+  });
+
   it("학생마다 다른 문제를 보내고 정답은 서버에서 판정해 교사에게 정답 수만 공개한다", async () => {
     const roomName = `quiz-${crypto.randomUUID()}`;
     const first = await joinSocket(roomName, "학생1");

@@ -1,11 +1,12 @@
 "use client";
 
-import { RoomCodeSchema } from "@bubble-semble/shared";
+import { RoomCodeSchema, type ServerMessage } from "@bubble-semble/shared";
 import { type FormEvent, useEffect, useState } from "react";
 
 type RoomStatus = {
   expiresAt: number;
   capturedCount: number;
+  stage: Extract<ServerMessage, { type: "stage" }>;
   players: Array<{ id: string; nickname: string; connected: boolean; solvedCount: number }>;
 };
 
@@ -104,6 +105,14 @@ export function TeacherRoomPanel() {
               <p><strong>{connected}/10</strong><span>접속 학생</span></p>
               <p><strong>{status?.capturedCount ?? 0}</strong><span>팀 포획</span></p>
             </div>
+            {status?.stage && (
+              <p className="teacher-stage" aria-live="polite">
+                스테이지 1 {status.stage.status === "cleared" ? "클리어" : status.stage.status === "active" ? "진행 중" : "시작 대기"}
+                {" · "}포획 {status.stage.capturedCount}/{status.stage.captureGoal}
+                {" · "}팀 정답 {status.stage.solvedCount}/{status.stage.questionGoal}
+                {" · "}{Math.floor(status.stage.elapsedSeconds / 60)}분 {status.stage.elapsedSeconds % 60}초
+              </p>
+            )}
             <h2>참여 현황</h2>
             {status?.players.length ? (
               <ul className="teacher-roster">

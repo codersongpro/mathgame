@@ -6,6 +6,7 @@ import { useEffect, useRef } from "react";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { ReconnectOverlay } from "./ReconnectOverlay";
 import { QuizPanel } from "./QuizPanel";
+import { StageClearOverlay, StageOnePanel } from "./StageOnePanel";
 import { TouchControls, type TouchInput } from "./TouchControls";
 import { useGameRoom } from "../realtime/useGameRoom";
 
@@ -31,7 +32,7 @@ export function GameShell({ room, nickname }: { room: string; nickname: string }
   const playerIdRef = useRef<string | null>(null);
   const sequenceRef = useRef(0);
   const directionRef = useRef<-1 | 1>(1);
-  const { connectionState, snapshot, combat, question, quizFeedback, playerId, error, sendInput, sendAction, sendQuiz } = useGameRoom(
+  const { connectionState, snapshot, combat, question, quizFeedback, stage, playerId, error, sendInput, sendAction, sendQuiz } = useGameRoom(
     realtimeRoomUrl(room),
     room,
     nickname,
@@ -89,6 +90,7 @@ export function GameShell({ room, nickname }: { room: string; nickname: string }
           <span>{nickname} · 포획 {combat?.capturedCount ?? 0}</span>
         </div>
         <ConnectionBanner state={connectionState} />
+        <StageOnePanel stage={stage} />
         <ul className="sr-only" aria-label="연결된 친구 위치" data-testid="player-roster">
           {snapshot?.players.map((player) => (
             <li key={player.id} data-nickname={player.nickname} data-x={player.x}>
@@ -100,13 +102,15 @@ export function GameShell({ room, nickname }: { room: string; nickname: string }
 
       <section className="game-stage" aria-label="Bubble Semble 협동 게임 화면">
         <div ref={gameContainerRef} className="game-canvas" data-testid="game-canvas" />
-        <QuizPanel
-          question={question}
-          feedback={quizFeedback}
-          online={connectionState === "online"}
-          onAnswer={(questionId, choice) => sendQuiz({ type: "answer", questionId, choice })}
-          onNext={() => sendQuiz({ type: "next-question" })}
-        />
+        {stage?.status !== "cleared" && (
+          <QuizPanel
+            question={question}
+            feedback={quizFeedback}
+            online={connectionState === "online"}
+            onAnswer={(questionId, choice) => sendQuiz({ type: "answer", questionId, choice })}
+            onNext={() => sendQuiz({ type: "next-question" })}
+          />
+        )}
         {error ? (
           <div className="game-error" role="alert">
             <p>{error}</p>
@@ -114,11 +118,14 @@ export function GameShell({ room, nickname }: { room: string; nickname: string }
           </div>
         ) : null}
         <ReconnectOverlay state={connectionState} />
-        <TouchControls
-          onChange={handleTouchInput}
-          onAction={handleAction}
-          actionsEnabled={connectionState === "online" && combat !== null}
-        />
+        {stage?.status !== "cleared" && (
+          <TouchControls
+            onChange={handleTouchInput}
+            onAction={handleAction}
+            actionsEnabled={connectionState === "online" && combat !== null}
+          />
+        )}
+        <StageClearOverlay stage={stage} />
       </section>
     </main>
   );
