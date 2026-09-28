@@ -44,10 +44,20 @@ const PingMessageSchema = z
   })
   .strict();
 
+const AnswerMessageSchema = z.object({
+  type: z.literal("answer"),
+  questionId: z.string().uuid(),
+  choice: z.number().int().min(0).max(20),
+}).strict();
+
+const NextQuestionMessageSchema = z.object({ type: z.literal("next-question") }).strict();
+
 export const ClientMessageSchema = z.discriminatedUnion("type", [
   JoinMessageSchema,
   InputMessageSchema,
   ActionMessageSchema,
+  AnswerMessageSchema,
+  NextQuestionMessageSchema,
   PingMessageSchema,
 ]);
 
@@ -120,6 +130,27 @@ const PongMessageSchema = z
   })
   .strict();
 
+/** 정답은 학생에게 보내지 않고 각자의 선택지만 전송합니다. */
+const QuestionMessageSchema = z.object({
+  type: z.literal("question"),
+  questionId: z.string().uuid(),
+  prompt: z.string().min(1).max(40),
+  choices: z.array(z.number().int().min(0).max(20)).length(4),
+  solvedCount: z.number().int().nonnegative(),
+}).strict();
+
+const QuizFeedbackMessageSchema = z.object({
+  type: z.literal("quiz-feedback"),
+  questionId: z.string().uuid(),
+  correct: z.boolean(),
+  completed: z.boolean(),
+  solvedCount: z.number().int().nonnegative(),
+  hint: z.string().max(100).optional(),
+  wrongChoice: z.number().int().min(0).max(20).optional(),
+  answer: z.number().int().min(0).max(20).optional(),
+  boosted: z.boolean(),
+}).strict();
+
 const ErrorMessageSchema = z
   .object({
     type: z.literal("error"),
@@ -132,6 +163,8 @@ export const ServerMessageSchema = z.discriminatedUnion("type", [
   JoinedMessageSchema,
   SnapshotMessageSchema,
   CombatMessageSchema,
+  QuestionMessageSchema,
+  QuizFeedbackMessageSchema,
   PongMessageSchema,
   ErrorMessageSchema,
 ]);

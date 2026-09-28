@@ -6,7 +6,7 @@ import { type FormEvent, useEffect, useState } from "react";
 type RoomStatus = {
   expiresAt: number;
   capturedCount: number;
-  players: Array<{ id: string; nickname: string; connected: boolean }>;
+  players: Array<{ id: string; nickname: string; connected: boolean; solvedCount: number }>;
 };
 
 export function TeacherRoomPanel() {
@@ -110,12 +110,12 @@ export function TeacherRoomPanel() {
                 {status.players.map((player) => (
                   <li key={player.id}>
                     <span>{player.nickname}</span>
-                    <span>{player.connected ? "접속 중" : "재접속 대기"}</span>
+                    <span>정답 {player.solvedCount}개 · {player.connected ? "접속 중" : "재접속 대기"}</span>
                   </li>
                 ))}
               </ul>
             ) : <p>아직 입장한 학생이 없습니다.</p>}
-            <p className="field-hint">현황은 약 2초마다 갱신됩니다. 이 단계에서는 별명과 팀 활동만 표시합니다.</p>
+            <p className="field-hint">현황은 약 2초마다 갱신됩니다. 개인 문제와 오답 내용은 교사 화면에 표시하지 않습니다.</p>
           </section>
         )}
         <a className="teacher-home-link" href="/">학생 입장 화면으로</a>

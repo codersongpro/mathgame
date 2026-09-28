@@ -54,6 +54,7 @@ async function openSocket(roomName: string): Promise<WebSocket> {
 async function joinSocket(roomName: string, nickname: string, reconnectToken?: string) {
   const socket = await openSocket(roomName);
   const joinedMessage = waitForMessage(socket, (message) => message.type === "joined");
+  const questionMessage = waitForMessage(socket, (message) => message.type === "question");
   socket.send(
     JSON.stringify({
       type: "join",
@@ -62,13 +63,105 @@ async function joinSocket(roomName: string, nickname: string, reconnectToken?: s
     }),
   );
   const joined = await joinedMessage;
+  const question = await questionMessage;
   if (joined.type !== "joined") throw new Error("입장 응답이 아닙니다.");
-  return { socket, joined };
+  if (question.type !== "question") throw new Error("개인 문제가 아닙니다.");
+  return { socket, joined, question };
+}
+
+function answerFromPrompt(prompt: string): number {
+  const [left, operation, right] = prompt.split(" ");
+  return operation === "+" ? Number(left) + Number(right) : Number(left) - Number(right);
 }
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("GameRoom", () => {
+  it("학생마다 다른 문제를 보내고 정답은 서버에서 판정해 교사에게 정답 수만 공개한다", async () => {
+    const roomName = `quiz-${crypto.randomUUID()}`;
+    const first = await joinSocket(roomName, "학생1");
+    const second = await joinSocket(roomName, "학생2");
+    try {
+      expect(first.question.questionId).not.toBe(second.question.questionId);
+      expect(first.question).not.toHaveProperty("correctAnswer");
+      expect(first.question).not.toHaveProperty("answer");
+
+      const correct = answerFromPrompt(first.question.prompt);
+      const feedback = waitForMessage(first.socket, (message) => message.type === "quiz-feedback");
+      first.socket.send(JSON.stringify({ type: "answer", questionId: first.question.questionId, choice: correct }));
+      await expect(feedback).resolves.toMatchObject({ correct: true, completed: true, solvedCount: 1, boosted: true });
+
+      const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomName));
+      const status = await room.fetch("https://room.internal/internal/status", {
+        headers: { Authorization: `Bearer ${testTeacherToken}` },
+      });
+      const monitor = await status.json() as { players: Array<Record<string, unknown>> };
+      expect(monitor.players.find((player) => player.id === first.joined.playerId)?.solvedCount).toBe(1);
+      expect(monitor.players.find((player) => player.id === second.joined.playerId)?.solvedCount).toBe(0);
+      expect(JSON.stringify(monitor)).not.toContain(first.question.prompt);
+
+      const duplicate = waitForMessage(first.socket, (message) => message.type === "error");
+      first.socket.send(JSON.stringify({ type: "answer", questionId: first.question.questionId, choice: correct }));
+      await expect(duplicate).resolves.toMatchObject({ code: "INVALID_MESSAGE" });
+
+      const next = waitForMessage(first.socket, (message) => message.type === "question");
+      first.socket.send(JSON.stringify({ type: "next-question" }));
+      const newQuestion = await next;
+      expect(newQuestion.type === "question" && newQuestion.questionId).not.toBe(first.question.questionId);
+
+      const firstBubble = waitForMessage(first.socket, (message) => message.type === "combat" && message.bubbles.length === 1);
+      first.socket.send(JSON.stringify({ type: "action", sequence: 1, kind: "fire", direction: 1 }));
+      const fired = await firstBubble;
+      if (fired.type !== "combat") throw new Error("거품 상태가 아닙니다.");
+      await waitForMessage(first.socket, (message) => message.type === "combat" && message.serverTick >= fired.serverTick + 6);
+      const fastSecondBubble = waitForMessage(first.socket, (message) => message.type === "combat" && message.bubbles.length === 2);
+      first.socket.send(JSON.stringify({ type: "action", sequence: 2, kind: "fire", direction: 1 }));
+      await expect(fastSecondBubble).resolves.toMatchObject({ type: "combat" });
+    } finally {
+      first.socket.close(1000, "test complete");
+      second.socket.close(1000, "test complete");
+    }
+  });
+
+  it("첫 오답에 힌트를 주고 두 번째 오답에서만 정답을 알려준다", async () => {
+    const player = await joinSocket(`wrong-quiz-${crypto.randomUUID()}`, "학생1");
+    try {
+      const [firstWrong, secondWrong] = player.question.choices.filter(
+        (choice) => choice !== answerFromPrompt(player.question.prompt),
+      );
+      const firstFeedback = waitForMessage(player.socket, (message) => message.type === "quiz-feedback");
+      player.socket.send(JSON.stringify({ type: "answer", questionId: player.question.questionId, choice: firstWrong }));
+      const hint = await firstFeedback;
+      expect(hint).toMatchObject({ correct: false, completed: false, wrongChoice: firstWrong });
+      expect(hint.type === "quiz-feedback" && hint.hint).toBeTruthy();
+      expect(hint).not.toHaveProperty("answer");
+
+      const finalFeedback = waitForMessage(player.socket, (message) => message.type === "quiz-feedback" && message.completed);
+      player.socket.send(JSON.stringify({ type: "answer", questionId: player.question.questionId, choice: secondWrong }));
+      const completed = await finalFeedback;
+      expect(completed).toMatchObject({ correct: false, completed: true, solvedCount: 0 });
+      expect(completed.type === "quiz-feedback" && completed.answer).toBeTypeOf("number");
+    } finally {
+      player.socket.close(1000, "test complete");
+    }
+  });
+
+  it("재접속하면 진행 중이던 개인 문제를 다시 보내고 다른 문제 ID 제출을 거절한다", async () => {
+    const roomName = `quiz-reconnect-${crypto.randomUUID()}`;
+    const first = await joinSocket(roomName, "학생1");
+    const invalid = waitForMessage(first.socket, (message) => message.type === "error");
+    first.socket.send(JSON.stringify({
+      type: "answer", questionId: crypto.randomUUID(), choice: first.question.choices[0],
+    }));
+    await expect(invalid).resolves.toMatchObject({ code: "INVALID_MESSAGE" });
+    first.socket.close(1000, "temporary disconnect");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const restored = await joinSocket(roomName, "학생1", first.joined.reconnectToken);
+    expect(restored.joined.playerId).toBe(first.joined.playerId);
+    expect(restored.question.questionId).toBe(first.question.questionId);
+    restored.socket.close(1000, "test complete");
+  });
   it("교사가 만들지 않은 방의 WebSocket 입장을 거절한다", async () => {
     const id = env.GAME_ROOM.idFromName(`uncreated-${crypto.randomUUID()}`);
     const response = await env.GAME_ROOM.get(id).fetch("https://room.internal", {

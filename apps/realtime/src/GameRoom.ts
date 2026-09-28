@@ -4,6 +4,7 @@ import {
   SNAPSHOT_RATE,
   TICK_RATE,
   RoomRoster,
+  createMathQuestion,
   createMonster,
   fireBubble,
   monsterLimit,
@@ -14,6 +15,7 @@ import {
   type CombatBubble,
   type CombatMonster,
   type MapTier,
+  type MathQuestion,
   type PlayerInput,
   type PlayerSimulationState,
   type RosterPlayer,
@@ -61,6 +63,15 @@ type TeacherRoomRecord = {
   expiresAt: number;
 };
 
+type PersonalQuiz = {
+  question: MathQuestion;
+  wrongChoices: Set<number>;
+  completed: boolean;
+  solvedCount: number;
+  boostedUntilTick: number;
+  lastFeedback: Extract<ServerMessage, { type: "quiz-feedback" }> | null;
+};
+
 const ROOM_LIFETIME_MS = 4 * 60 * 60 * 1_000;
 
 const TICK_INTERVAL_MS = 1_000 / TICK_RATE;
@@ -90,6 +101,8 @@ export class GameRoom extends DurableObject<Env> {
   readonly #playerStates = new Map<string, PlayerSimulationState>();
   readonly #inputs = new Map<string, PlayerInput>();
   readonly #lastFireTick = new Map<string, number>();
+  readonly #quizzes = new Map<string, PersonalQuiz>();
+  #nextQuestionIndex = 0;
   #monsters: CombatMonster[] = [];
   #bubbles: CombatBubble[] = [];
   #capturedCount = 0;
@@ -176,6 +189,7 @@ export class GameRoom extends DurableObject<Env> {
           id,
           nickname,
           connected,
+          solvedCount: this.#quizzes.get(id)?.solvedCount ?? 0,
         })),
       }, { headers: { "Cache-Control": "no-store" } });
     }
@@ -280,6 +294,9 @@ export class GameRoom extends DurableObject<Env> {
         tickRate: TICK_RATE,
         snapshotRate: SNAPSHOT_RATE,
       });
+      const quiz = this.#quizzes.get(joined.player.id) ?? this.#createQuiz(joined.player.id);
+      this.#sendQuestion(socket, quiz);
+      if (quiz.lastFeedback) this.#send(socket, quiz.lastFeedback);
       await this.#persistCheckpoint();
       this.#startLoop();
       return;
@@ -295,10 +312,56 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    if (message.type === "answer") {
+      const quiz = this.#quizzes.get(connection.playerId);
+      if (!quiz || quiz.completed || quiz.question.id !== message.questionId ||
+        !quiz.question.choices.includes(message.choice)) {
+        this.#sendError(socket, "INVALID_MESSAGE", "현재 문제의 선택지만 제출할 수 있습니다.");
+        return;
+      }
+      // 같은 오답을 다시 눌러 재도전 기회를 소모하지 못하게 합니다.
+      if (quiz.wrongChoices.has(message.choice)) return;
+
+      const correct = message.choice === quiz.question.correctAnswer;
+      if (correct) {
+        quiz.solvedCount += 1;
+        quiz.completed = true;
+        quiz.boostedUntilTick = this.#serverTick + TICK_RATE * 5;
+      } else {
+        quiz.wrongChoices.add(message.choice);
+        quiz.completed = quiz.wrongChoices.size >= 2;
+      }
+      quiz.lastFeedback = {
+        type: "quiz-feedback",
+        questionId: quiz.question.id,
+        correct,
+        completed: quiz.completed,
+        solvedCount: quiz.solvedCount,
+        boosted: correct,
+        ...(!correct && !quiz.completed
+          ? { hint: quiz.question.hint, wrongChoice: message.choice }
+          : {}),
+        ...(!correct && quiz.completed ? { answer: quiz.question.correctAnswer } : {}),
+      };
+      this.#send(socket, quiz.lastFeedback);
+      return;
+    }
+
+    if (message.type === "next-question") {
+      const quiz = this.#quizzes.get(connection.playerId);
+      if (!quiz?.completed) {
+        this.#sendError(socket, "INVALID_MESSAGE", "현재 문제를 먼저 완료해 주세요.");
+        return;
+      }
+      this.#sendQuestion(socket, this.#createQuiz(connection.playerId, quiz.solvedCount, quiz.boostedUntilTick));
+      return;
+    }
+
     if (this.#fixedMapTier === null) {
       this.#fixedMapTier = selectMapTier(this.#connectedPlayerCount());
       await this.#persistCheckpoint();
     }
+
     if (message.type === "action") {
       if (message.sequence <= connection.lastActionSequence) return;
       connection.lastActionSequence = message.sequence;
@@ -307,7 +370,8 @@ export class GameRoom extends DurableObject<Env> {
 
       if (message.kind === "fire") {
         const lastFireTick = this.#lastFireTick.get(connection.playerId) ?? -TICK_RATE;
-        if (this.#serverTick - lastFireTick < TICK_RATE / 2) return;
+        const boosted = (this.#quizzes.get(connection.playerId)?.boostedUntilTick ?? 0) > this.#serverTick;
+        if (this.#serverTick - lastFireTick < TICK_RATE / (boosted ? 4 : 2)) return;
         this.#lastFireTick.set(connection.playerId, this.#serverTick);
         this.#nextBubbleIndex += 1;
         this.#bubbles.push(
@@ -472,6 +536,7 @@ export class GameRoom extends DurableObject<Env> {
       this.#playerStates.delete(playerId);
       this.#inputs.delete(playerId);
       this.#lastFireTick.delete(playerId);
+      this.#quizzes.delete(playerId);
     }
   }
 
@@ -489,6 +554,30 @@ export class GameRoom extends DurableObject<Env> {
       updatedAt: Date.now(),
     };
     await this.ctx.storage.put("checkpoint", checkpoint);
+  }
+
+  #createQuiz(playerId: string, solvedCount = 0, boostedUntilTick = 0): PersonalQuiz {
+    // 개인 정답과 시도 내역은 Durable Object 저장소에 쓰지 않습니다.
+    const quiz: PersonalQuiz = {
+      question: createMathQuestion(this.#nextQuestionIndex++, crypto.randomUUID()),
+      wrongChoices: new Set(),
+      completed: false,
+      solvedCount,
+      boostedUntilTick,
+      lastFeedback: null,
+    };
+    this.#quizzes.set(playerId, quiz);
+    return quiz;
+  }
+
+  #sendQuestion(socket: WebSocket, quiz: PersonalQuiz): void {
+    this.#send(socket, {
+      type: "question",
+      questionId: quiz.question.id,
+      prompt: quiz.question.prompt,
+      choices: quiz.question.choices,
+      solvedCount: quiz.solvedCount,
+    });
   }
 
   #send(socket: WebSocket, message: ServerMessage): void {

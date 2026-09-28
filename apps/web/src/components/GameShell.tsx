@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useRef } from "react";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { ReconnectOverlay } from "./ReconnectOverlay";
+import { QuizPanel } from "./QuizPanel";
 import { TouchControls, type TouchInput } from "./TouchControls";
 import { useGameRoom } from "../realtime/useGameRoom";
 
@@ -30,7 +31,7 @@ export function GameShell({ room, nickname }: { room: string; nickname: string }
   const playerIdRef = useRef<string | null>(null);
   const sequenceRef = useRef(0);
   const directionRef = useRef<-1 | 1>(1);
-  const { connectionState, snapshot, combat, playerId, error, sendInput, sendAction } = useGameRoom(
+  const { connectionState, snapshot, combat, question, quizFeedback, playerId, error, sendInput, sendAction, sendQuiz } = useGameRoom(
     realtimeRoomUrl(room),
     room,
     nickname,
@@ -99,6 +100,13 @@ export function GameShell({ room, nickname }: { room: string; nickname: string }
 
       <section className="game-stage" aria-label="Bubble Semble 협동 게임 화면">
         <div ref={gameContainerRef} className="game-canvas" data-testid="game-canvas" />
+        <QuizPanel
+          question={question}
+          feedback={quizFeedback}
+          online={connectionState === "online"}
+          onAnswer={(questionId, choice) => sendQuiz({ type: "answer", questionId, choice })}
+          onNext={() => sendQuiz({ type: "next-question" })}
+        />
         {error ? (
           <div className="game-error" role="alert">
             <p>{error}</p>

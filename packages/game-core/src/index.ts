@@ -5,3 +5,4 @@ export * from "./mapTier";
 export * from "./playerSimulation";
 export * from "./roomRoster";
 export * from "./combat";
+export * from "./quiz";

@@ -17,7 +17,7 @@ describe("교사 방 화면", () => {
       .mockResolvedValueOnce(Response.json({ roomCode: "012345", expiresAt: Date.now() + 10_000 }))
       .mockResolvedValue(Response.json({
         capturedCount: 2,
-        players: [{ id: "one", nickname: "별빛토끼", connected: true }],
+        players: [{ id: "one", nickname: "별빛토끼", connected: true, solvedCount: 3 }],
       }));
     vi.stubGlobal("fetch", fetchMock);
     render(<TeacherRoomPanel />);
@@ -28,6 +28,7 @@ describe("교사 방 화면", () => {
     expect(await screen.findByText("012345")).toBeVisible();
     expect(await screen.findByText("별빛토끼")).toBeVisible();
     expect(screen.getByText("2")).toBeVisible();
+    expect(screen.getByText("정답 3개 · 접속 중")).toBeVisible();
     expect(window.location.search).toBe("?room=012345");
     expect(screen.getByLabelText("교사 접속키")).toHaveValue("");
   });
