@@ -3,6 +3,8 @@ import Phaser from "phaser";
 
 type RemoteView = {
   container: Phaser.GameObjects.Container;
+  body: Phaser.GameObjects.Rectangle;
+  label: Phaser.GameObjects.Text;
   fromX: number;
   fromY: number;
   toX: number;
@@ -26,7 +28,7 @@ export class RemotePlayerView {
     this.#scene = scene;
   }
 
-  receive(players: PublicPlayerState[], receivedAt: number) {
+  receive(players: PublicPlayerState[], receivedAt: number, downedIds = new Set<string>()) {
     const activeIds = new Set(players.map((player) => player.id));
 
     for (const player of players) {
@@ -38,13 +40,15 @@ export class RemotePlayerView {
         existing.toY = player.y;
         existing.changedAt = receivedAt;
         existing.container.setAlpha(player.connected ? 1 : 0.45);
+        existing.body.setFillStyle(downedIds.has(player.id) ? 0xff6f8b : colorForPlayer(player.id));
+        existing.label.setText(downedIds.has(player.id) ? `${player.nickname} · 구출!` : player.nickname);
         continue;
       }
 
-      const body = this.#scene.add.rectangle(0, -22, 34, 44, colorForPlayer(player.id));
+      const body = this.#scene.add.rectangle(0, -22, 34, 44, downedIds.has(player.id) ? 0xff6f8b : colorForPlayer(player.id));
       body.setStrokeStyle(4, 0x0c0920);
       const label = this.#scene.add
-        .text(0, -58, player.nickname, {
+        .text(0, -58, downedIds.has(player.id) ? `${player.nickname} · 구출!` : player.nickname, {
           color: "#f6f4dd",
           fontFamily: "Courier New, monospace",
           fontSize: "14px",
@@ -60,6 +64,8 @@ export class RemotePlayerView {
 
       this.#views.set(player.id, {
         container,
+        body,
+        label,
         fromX: player.x,
         fromY: player.y,
         toX: player.x,

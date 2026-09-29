@@ -9,6 +9,7 @@ afterEach(cleanup);
 
 const active = {
   type: "stage" as const,
+  setNumber: 1,
   stage: 1 as const,
   status: "active" as const,
   capturedCount: 1,
@@ -35,5 +36,12 @@ describe("일반 스테이지 1 화면", () => {
     expect(screen.getByLabelText("1스테이지 클리어")).toBeVisible();
     expect(screen.getByText("1스테이지 클리어!")).toBeVisible();
     expect(screen.getByText(/잠시 후 2스테이지/)).toBeVisible();
+  });
+
+  it("두 번째 스테이지에서는 세 번째 진입을, 세 번째에서는 일반전 종료를 알린다", () => {
+    const { rerender } = render(<StageClearOverlay stage={{ ...active, stage: 2, status: "cleared" }} />);
+    expect(screen.getByText(/잠시 후 3스테이지/)).toBeVisible();
+    rerender(<StageClearOverlay stage={{ ...active, stage: 3, status: "cleared" }} />);
+    expect(screen.getByText(/일반 스테이지 3개를 모두 완료했습니다. 잠시 후 함께 보스전에 진입합니다./)).toBeVisible();
   });
 });

@@ -32,7 +32,7 @@ const ActionMessageSchema = z
   .object({
     type: z.literal("action"),
     sequence: z.number().int().nonnegative(),
-    kind: z.enum(["fire", "pop"]),
+    kind: z.enum(["fire", "pop", "rescue"]),
     direction: z.union([z.literal(-1), z.literal(1)]),
   })
   .strict();
@@ -47,10 +47,15 @@ const PingMessageSchema = z
 const AnswerMessageSchema = z.object({
   type: z.literal("answer"),
   questionId: z.string().uuid(),
-  choice: z.number().int().min(0).max(20),
+  choice: z.number().int().min(0).max(10_000),
 }).strict();
 
 const NextQuestionMessageSchema = z.object({ type: z.literal("next-question") }).strict();
+const GateAnswerMessageSchema = z.object({
+  type: z.literal("gate-answer"),
+  questionId: z.string().uuid(),
+  choice: z.number().int().min(0).max(10_000),
+}).strict();
 
 export const ClientMessageSchema = z.discriminatedUnion("type", [
   JoinMessageSchema,
@@ -58,6 +63,7 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
   ActionMessageSchema,
   AnswerMessageSchema,
   NextQuestionMessageSchema,
+  GateAnswerMessageSchema,
   PingMessageSchema,
 ]);
 
@@ -89,7 +95,13 @@ const stageGoal = (seconds: number, score: number) => z.object({
 export const RoomStageSettingsSchema = z.object({
   stage1: stageGoal(120, 100).prefault({}),
   stage2: stageGoal(150, 150).prefault({}),
-}).strict();
+  stage3: stageGoal(90, 180).prefault({}),
+  multiplicationTables: z.array(z.number().int().min(1).max(19)).max(19)
+    .refine((tables) => new Set(tables).size === tables.length, "같은 단을 중복 선택할 수 없습니다.").default([]),
+  divisionEnabled: z.boolean().default(false),
+  grade: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)]).default(1),
+}).strict().refine((settings) => !settings.divisionEnabled || settings.multiplicationTables.length > 0,
+  "나눗셈을 출제하려면 먼저 구구단을 선택해 주세요.");
 
 export type RoomStageSettings = z.infer<typeof RoomStageSettingsSchema>;
 
@@ -136,6 +148,13 @@ const CombatMessageSchema = z
   })
   .strict();
 
+/** 기존 위치 스냅숏과 분리해 구버전 웹 화면도 이동을 계속할 수 있게 합니다. */
+const RescueStateMessageSchema = z.object({
+  type: z.literal("rescue-state"),
+  players: z.array(z.object({ id: z.string().min(1), downed: z.boolean() }).strict()).max(10),
+  rescueCount: z.number().int().nonnegative(),
+}).strict();
+
 const PongMessageSchema = z
   .object({
     type: z.literal("pong"),
@@ -149,7 +168,7 @@ const QuestionMessageSchema = z.object({
   type: z.literal("question"),
   questionId: z.string().uuid(),
   prompt: z.string().min(1).max(40),
-  choices: z.array(z.number().int().min(0).max(20)).length(4),
+  choices: z.array(z.number().int().min(0).max(10_000)).length(4),
   solvedCount: z.number().int().nonnegative(),
 }).strict();
 
@@ -160,15 +179,38 @@ const QuizFeedbackMessageSchema = z.object({
   completed: z.boolean(),
   solvedCount: z.number().int().nonnegative(),
   hint: z.string().max(100).optional(),
-  wrongChoice: z.number().int().min(0).max(20).optional(),
-  answer: z.number().int().min(0).max(20).optional(),
+  wrongChoice: z.number().int().min(0).max(10_000).optional(),
+  answer: z.number().int().min(0).max(10_000).optional(),
   boosted: z.boolean(),
+}).strict();
+
+/** 개인 문제와 별개인 팀 관문입니다. 공개 상태에는 학생별 답을 포함하지 않습니다. */
+const GateStateMessageSchema = z.object({
+  type: z.literal("gate-state"),
+  status: z.enum(["locked", "active", "cleared"]),
+  solved: z.number().int().nonnegative(),
+  required: z.number().int().min(2).max(6),
+}).strict();
+
+const GateQuestionMessageSchema = z.object({
+  type: z.literal("gate-question"),
+  questionId: z.string().uuid(),
+  prompt: z.string().min(1).max(40),
+  choices: z.array(z.number().int().min(0).max(10_000)).length(4),
+}).strict();
+
+const GateFeedbackMessageSchema = z.object({
+  type: z.literal("gate-feedback"),
+  questionId: z.string().uuid(),
+  correct: z.boolean(),
+  hint: z.string().max(100).optional(),
 }).strict();
 
 /** 팀 목표는 전원에게 공유하고 개인 문제와 오답은 포함하지 않습니다. */
 const StageMessageSchema = z.object({
   type: z.literal("stage"),
-  stage: z.union([z.literal(1), z.literal(2)]),
+  setNumber: z.number().int().min(1).max(100).default(1),
+  stage: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
   status: z.enum(["waiting", "active", "cleared"]),
   capturedCount: z.number().int().nonnegative(),
   captureGoal: z.number().int().positive(),
@@ -179,6 +221,17 @@ const StageMessageSchema = z.object({
   score: z.number().int().nonnegative(),
   targetScore: z.number().int().min(10).max(2000),
   clearMode: z.enum(["both", "either"]),
+}).strict();
+
+const BossStateMessageSchema = z.object({
+  type: z.literal("boss-state"),
+  setNumber: z.number().int().min(1).max(100).default(1),
+  status: z.enum(["active", "cleared"]),
+  health: z.number().int().nonnegative(),
+  maxHealth: z.number().int().positive(),
+  shielded: z.boolean(),
+  elapsedSeconds: z.number().int().nonnegative(),
+  playerCount: z.number().int().min(1).max(10),
 }).strict();
 
 const ErrorMessageSchema = z
@@ -193,9 +246,14 @@ export const ServerMessageSchema = z.discriminatedUnion("type", [
   JoinedMessageSchema,
   SnapshotMessageSchema,
   CombatMessageSchema,
+  RescueStateMessageSchema,
   QuestionMessageSchema,
   QuizFeedbackMessageSchema,
+  GateStateMessageSchema,
+  GateQuestionMessageSchema,
+  GateFeedbackMessageSchema,
   StageMessageSchema,
+  BossStateMessageSchema,
   PongMessageSchema,
   ErrorMessageSchema,
 ]);

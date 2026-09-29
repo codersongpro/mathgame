@@ -68,4 +68,17 @@ describe("태블릿 터치 조작", () => {
     expect(screen.getByRole("button", { name: "거품 발사" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "팡! 터뜨리기" })).toBeDisabled();
   });
+
+  it("가까운 친구가 쓰러졌을 때만 구출 버튼으로 행동을 보낸다", () => {
+    const onAction = vi.fn();
+    const { rerender } = render(
+      <TouchControls onChange={() => undefined} onAction={onAction} actionsEnabled rescueEnabled={false} />,
+    );
+    const rescue = screen.getByRole("button", { name: "가까운 친구 구출" });
+    expect(rescue).toBeDisabled();
+    rerender(<TouchControls onChange={() => undefined} onAction={onAction} actionsEnabled rescueEnabled />);
+    fireEvent.pointerDown(rescue, { pointerId: 5 });
+    expect(onAction).toHaveBeenCalledExactlyOnceWith("rescue");
+    expect(Number.parseFloat(getComputedStyle(rescue).minWidth)).toBeGreaterThanOrEqual(64);
+  });
 });

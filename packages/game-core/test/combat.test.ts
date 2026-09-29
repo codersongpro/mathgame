@@ -3,6 +3,7 @@ import {
   createMonster,
   fireBubble,
   monsterLimit,
+  stageMonsterLimit,
   popTrappedBubble,
   stepCombat,
 } from "../src/combat";
@@ -13,6 +14,15 @@ describe("거품 전투 규칙", () => {
     expect(monsterLimit(3)).toBe(3);
     expect(monsterLimit(10)).toBe(6);
     expect(monsterLimit(30)).toBeLessThanOrEqual(8);
+  });
+
+  it("세 번째 일반 스테이지는 몬스터를 두 마리 늘리되 최대 여덟 마리다", () => {
+    expect(stageMonsterLimit(1, 1)).toBe(2);
+    expect(stageMonsterLimit(1, 2)).toBe(2);
+    expect(stageMonsterLimit(1, 3)).toBe(4);
+    expect(stageMonsterLimit(10, 3)).toBe(8);
+    expect(stageMonsterLimit(1, 1, 2)).toBe(3);
+    expect(stageMonsterLimit(10, 3, 10)).toBe(8);
   });
 
   it("서버가 가진 플레이어 위치와 방향에서 거품을 발사한다", () => {

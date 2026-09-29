@@ -8,3 +8,6 @@ export * from "./combat";
 export * from "./quiz";
 export * from "./stageOne";
 export * from "./stageGoals";
+export * from "./rescue";
+export * from "./teamGate";
+export * from "./boss";

@@ -75,6 +75,12 @@ async function joinSocket(roomName: string, nickname: string, reconnectToken?: s
 }
 
 function answerFromPrompt(prompt: string): number {
+  // 기본 1학년 문제에는 계산식뿐 아니라 네 수의 크기 비교도 나옵니다.
+  const comparison = prompt.match(/^(\d+), (\d+), (\d+), (\d+) 중 가장 (큰|작은) 수는\?$/);
+  if (comparison) {
+    const numbers = comparison.slice(1, 5).map(Number);
+    return comparison[5] === "큰" ? Math.max(...numbers) : Math.min(...numbers);
+  }
   const [left, operation, right] = prompt.split(" ");
   return operation === "+" ? Number(left) + Number(right) : Number(left) - Number(right);
 }
@@ -82,6 +88,147 @@ function answerFromPrompt(prompt: string): number {
 afterEach(() => vi.restoreAllMocks());
 
 describe("GameRoom", () => {
+  it("교사의 2학년 선택을 학생 문제와 정답 판정에 적용한다", async () => {
+    const roomName = `grade-two-${crypto.randomUUID()}`;
+    await createTestRoom(roomName, { grade: 2 });
+    const player = await joinSocket(roomName, "학생1");
+    try {
+      const [left, operation, right] = player.question.prompt.split(" ");
+      expect(["+", "−"]).toContain(operation);
+      const answer = answerFromPrompt(player.question.prompt);
+      expect(answer).toBeGreaterThanOrEqual(0);
+      expect(answer).toBeLessThanOrEqual(100);
+      expect(player.question.choices).toContain(answer);
+      expect(Number(left)).toBeLessThanOrEqual(100);
+      expect(Number(right)).toBeLessThanOrEqual(100);
+      const feedback = waitForMessage(player.socket, (message) =>
+        message.type === "quiz-feedback" && message.questionId === player.question.questionId);
+      player.socket.send(JSON.stringify({
+        type: "answer", questionId: player.question.questionId, choice: answer,
+      }));
+      await expect(feedback).resolves.toMatchObject({ correct: true, solvedCount: 1 });
+
+      const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomName));
+      const monitor = await room.fetch("https://room.internal/internal/status", {
+        headers: { Authorization: `Bearer ${testTeacherToken}` },
+      });
+      expect(await monitor.json()).toMatchObject({ settings: { grade: 2 } });
+    } finally {
+      player.socket.close(1000, "test complete");
+    }
+  });
+
+  it.each([3, 4] as const)("교사의 %i학년 선택을 큰 수 문제와 서버 판정에 적용한다", async (grade) => {
+    const roomName = `grade-${grade}-${crypto.randomUUID()}`;
+    await createTestRoom(roomName, { grade });
+    const player = await joinSocket(roomName, "학생1");
+    try {
+      const answer = answerFromPrompt(player.question.prompt);
+      expect(player.question.choices).toContain(answer);
+      expect(answer).toBeGreaterThanOrEqual(0);
+      expect(answer).toBeLessThanOrEqual(grade === 3 ? 1_000 : 10_000);
+      const feedback = waitForMessage(player.socket, (message) =>
+        message.type === "quiz-feedback" && message.questionId === player.question.questionId);
+      player.socket.send(JSON.stringify({
+        type: "answer", questionId: player.question.questionId, choice: answer,
+      }));
+      await expect(feedback).resolves.toMatchObject({ correct: true, solvedCount: 1 });
+    } finally {
+      player.socket.close(1000, "test complete");
+    }
+  });
+
+  it.each([5, 6] as const)("교사의 %i학년 선택으로 두 개념 문항을 풀 수 있다", async (grade) => {
+    const roomName = `grade-${grade}-${crypto.randomUUID()}`;
+    await createTestRoom(roomName, { grade });
+    const player = await joinSocket(roomName, "학생1");
+    try {
+      const firstNumbers = Array.from(player.question.prompt.matchAll(/\d+/g), (match) => Number(match[0]));
+      const firstAnswer = grade === 5
+        ? (firstNumbers[0]! + firstNumbers[1]! + firstNumbers[2]!) / 3
+        : firstNumbers[0]! * firstNumbers[1]! / 100;
+      const rejected = waitForMessage(player.socket, (message) =>
+        message.type === "error" && message.code === "INVALID_MESSAGE");
+      player.socket.send(JSON.stringify({
+        type: "answer", questionId: player.question.questionId, choice: 9_999,
+      }));
+      await expect(rejected).resolves.toMatchObject({ code: "INVALID_MESSAGE" });
+      const firstFeedback = waitForMessage(player.socket, (message) =>
+        message.type === "quiz-feedback" && message.questionId === player.question.questionId);
+      player.socket.send(JSON.stringify({
+        type: "answer", questionId: player.question.questionId, choice: firstAnswer,
+      }));
+      await expect(firstFeedback).resolves.toMatchObject({ correct: true, solvedCount: 1 });
+
+      const nextQuestion = waitForMessage(player.socket, (message) =>
+        message.type === "question" && message.questionId !== player.question.questionId);
+      player.socket.send(JSON.stringify({ type: "next-question" }));
+      const next = await nextQuestion;
+      if (next.type !== "question") throw new Error("두 번째 문제가 아닙니다.");
+      expect(next.prompt).toMatch(grade === 5 ? /직사각형 넓이\(cm²\)는\?$/ : /부피\(cm³\)는\?$/);
+      const dimensions = Array.from(next.prompt.matchAll(/\d+/g), (match) => Number(match[0]))
+        .slice(0, grade === 5 ? 2 : 3);
+      const secondAnswer = dimensions.reduce((product, value) => product * value, 1);
+      const secondFeedback = waitForMessage(player.socket, (message) =>
+        message.type === "quiz-feedback" && message.questionId === next.questionId);
+      player.socket.send(JSON.stringify({ type: "answer", questionId: next.questionId, choice: secondAnswer }));
+      await expect(secondFeedback).resolves.toMatchObject({ correct: true, solvedCount: 2 });
+    } finally {
+      player.socket.close(1000, "test complete");
+    }
+  });
+
+  it("교사가 선택한 단의 곱셈만 개인 문제로 내고 정답을 서버에서 판정한다", async () => {
+    const roomName = `multiplication-${crypto.randomUUID()}`;
+    await createTestRoom(roomName, { multiplicationTables: [7, 19] });
+    const player = await joinSocket(roomName, "학생1");
+    try {
+      const [table, operation, factor] = player.question.prompt.split(" ");
+      expect([7, 19]).toContain(Number(table));
+      expect(operation).toBe("×");
+      const answer = Number(table) * Number(factor);
+      expect(player.question.choices).toContain(answer);
+      const feedback = waitForMessage(player.socket, (message) =>
+        message.type === "quiz-feedback" && message.questionId === player.question.questionId);
+      player.socket.send(JSON.stringify({
+        type: "answer", questionId: player.question.questionId, choice: answer,
+      }));
+      await expect(feedback).resolves.toMatchObject({ correct: true, solvedCount: 1 });
+
+      const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomName));
+      const monitor = await room.fetch("https://room.internal/internal/status", {
+        headers: { Authorization: `Bearer ${testTeacherToken}` },
+      });
+      expect(await monitor.json()).toMatchObject({ settings: { multiplicationTables: [7, 19] } });
+    } finally {
+      player.socket.close(1000, "test complete");
+    }
+  });
+
+  it("나눗셈 옵션을 켜면 두 번째 개인 문제는 나누어떨어지는 식이 된다", async () => {
+    const roomName = `division-${crypto.randomUUID()}`;
+    await createTestRoom(roomName, { multiplicationTables: [7], divisionEnabled: true });
+    const first = await joinSocket(roomName, "학생1");
+    const second = await joinSocket(roomName, "학생2");
+    try {
+      expect(first.question.prompt).toMatch(/^7 × \d+ = \?$/);
+      const [dividend, operation, divisor] = second.question.prompt.split(" ");
+      expect(operation).toBe("÷");
+      expect(Number(divisor)).toBe(7);
+      const answer = Number(dividend) / Number(divisor);
+      expect(Number.isInteger(answer)).toBe(true);
+      const feedback = waitForMessage(second.socket, (message) =>
+        message.type === "quiz-feedback" && message.questionId === second.question.questionId);
+      second.socket.send(JSON.stringify({
+        type: "answer", questionId: second.question.questionId, choice: answer,
+      }));
+      await expect(feedback).resolves.toMatchObject({ correct: true, solvedCount: 1 });
+    } finally {
+      first.socket.close(1000, "test complete");
+      second.socket.close(1000, "test complete");
+    }
+  });
+
   it("참가 인원으로 첫 스테이지 팀 목표를 고정하고 정답을 팀 진행도에 반영한다", async () => {
     const roomName = `stage-goals-${crypto.randomUUID()}`;
     const first = await joinSocket(roomName, "학생1");
@@ -202,6 +349,245 @@ describe("GameRoom", () => {
       second.socket.close(1000, "test complete");
     }
   }, 10_000);
+
+  it("두 학생이 세 번째 관문을 클리어하면 같은 보스전에 입장한다", async () => {
+    const roomName = `stage-three-${crypto.randomUUID()}`;
+    await createTestRoom(roomName, {
+      stage1: { targetScore: 10, clearMode: "either" },
+      stage2: { targetScore: 10, clearMode: "either" },
+      stage3: { targetScore: 10, clearMode: "either" },
+    });
+    const first = await joinSocket(roomName, "학생1");
+    const second = await joinSocket(roomName, "학생2");
+    try {
+      const secondQuestion = waitForMessage(first.socket, (message) => message.type === "question", "2단계 문제", 6_000);
+      const secondStage = waitForMessage(second.socket, (message) => message.type === "stage" && message.stage === 2, "2단계 전환", 6_000);
+      first.socket.send(JSON.stringify({
+        type: "answer", questionId: first.question.questionId,
+        choice: answerFromPrompt(first.question.prompt),
+      }));
+      const question2 = await secondQuestion;
+      await secondStage;
+      if (question2.type !== "question") throw new Error("2단계 문제가 없습니다.");
+
+      const thirdQuestion = waitForMessage(first.socket, (message) => message.type === "question" && message.questionId !== question2.questionId, "3단계 문제", 6_000);
+      const firstThird = waitForMessage(first.socket, (message) => message.type === "stage" && message.stage === 3, "첫 학생 3단계", 6_000);
+      const secondThird = waitForMessage(second.socket, (message) => message.type === "stage" && message.stage === 3, "둘째 학생 3단계", 6_000);
+      first.socket.send(JSON.stringify({
+        type: "answer", questionId: question2.questionId,
+        choice: answerFromPrompt(question2.prompt),
+      }));
+      const question3 = await thirdQuestion;
+      const [one, two] = await Promise.all([firstThird, secondThird]);
+      expect(one).toMatchObject({ stage: 3, status: "active", targetSeconds: 90, targetScore: 10 });
+      expect(two).toMatchObject({ stage: 3, status: "active" });
+      expect(question3.type).toBe("question");
+      if (question3.type !== "question") throw new Error("3단계 문제가 없습니다.");
+
+      const monsters = await waitForMessage(first.socket, (message) =>
+        message.type === "combat" && message.monsters.length === 4);
+      expect(monsters.type).toBe("combat");
+      const firstGateQuestion = waitForMessage(first.socket, (message) => message.type === "gate-question");
+      const secondGateQuestion = waitForMessage(second.socket, (message) => message.type === "gate-question");
+      const opened = waitForMessage(second.socket, (message) =>
+        message.type === "gate-state" && message.status === "active");
+      const cleared = waitForMessage(second.socket, (message) =>
+        message.type === "stage" && message.stage === 3 && message.status === "cleared");
+      first.socket.send(JSON.stringify({
+        type: "answer", questionId: question3.questionId,
+        choice: answerFromPrompt(question3.prompt),
+      }));
+      const [firstPiece, secondPiece] = await Promise.all([firstGateQuestion, secondGateQuestion]);
+      await expect(opened).resolves.toMatchObject({ required: 2, solved: 0 });
+      if (firstPiece.type !== "gate-question" || secondPiece.type !== "gate-question") {
+        throw new Error("개인 관문 문제가 없습니다.");
+      }
+      expect(firstPiece.questionId).not.toBe(secondPiece.questionId);
+
+      const spoof = waitForMessage(first.socket, (message) =>
+        message.type === "error" && message.code === "INVALID_MESSAGE");
+      first.socket.send(JSON.stringify({
+        type: "gate-answer", questionId: firstPiece.questionId,
+        choice: answerFromPrompt(firstPiece.prompt), playerId: second.joined.playerId,
+      }));
+      await spoof;
+
+      const onePiece = waitForMessage(second.socket, (message) =>
+        message.type === "gate-state" && message.solved === 1);
+      first.socket.send(JSON.stringify({
+        type: "gate-answer", questionId: firstPiece.questionId,
+        choice: answerFromPrompt(firstPiece.prompt),
+      }));
+      await expect(onePiece).resolves.toMatchObject({ status: "active", required: 2 });
+      const duplicate = waitForMessage(first.socket, (message) =>
+        message.type === "error" && message.code === "INVALID_MESSAGE");
+      first.socket.send(JSON.stringify({
+        type: "gate-answer", questionId: firstPiece.questionId,
+        choice: answerFromPrompt(firstPiece.prompt),
+      }));
+      await duplicate;
+      second.socket.send(JSON.stringify({
+        type: "gate-answer", questionId: secondPiece.questionId,
+        choice: answerFromPrompt(secondPiece.prompt),
+      }));
+      await cleared;
+      const status = await env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomName)).fetch(
+        "https://room.internal/internal/status",
+        { headers: { Authorization: `Bearer ${testTeacherToken}` } },
+      );
+      const monitor = await status.json();
+      expect(monitor).toMatchObject({
+        stage: { stage: 3, status: "cleared" },
+        gate: { status: "cleared", solved: 2, required: 2 },
+      });
+      expect(JSON.stringify(monitor)).not.toContain(firstPiece.prompt);
+      expect(JSON.stringify(monitor)).not.toContain(secondPiece.prompt);
+
+      const firstBoss = waitForMessage(first.socket, (message) =>
+        message.type === "boss-state" && message.status === "active", "첫 학생 보스", 6_000);
+      const secondBoss = waitForMessage(second.socket, (message) =>
+        message.type === "boss-state" && message.status === "active", "둘째 학생 보스", 6_000);
+      const [bossOne, bossTwo] = await Promise.all([firstBoss, secondBoss]);
+      expect(bossOne).toMatchObject({ health: 10, maxHealth: 10, shielded: true, playerCount: 2 });
+      expect(bossTwo).toMatchObject({ health: 10, maxHealth: 10, shielded: true, playerCount: 2 });
+    } finally {
+      first.socket.close(1000, "test complete");
+      second.socket.close(1000, "test complete");
+    }
+  }, 18_000);
+
+  it("혼자 플레이해도 서로 다른 관문 조각 두 개를 풀고 종료할 수 있다", async () => {
+    const roomName = `solo-gate-${crypto.randomUUID()}`;
+    await createTestRoom(roomName, {
+      stage1: { targetScore: 10, clearMode: "either" },
+      stage2: { targetScore: 10, clearMode: "either" },
+      stage3: { targetScore: 10, clearMode: "either" },
+    });
+    const player = await joinSocket(roomName, "학생1");
+    try {
+      let question = player.question;
+      for (const stage of [2, 3] as const) {
+        const nextQuestion = waitForMessage(player.socket, (message) => message.type === "question", `${stage}단계 문제`, 6_000);
+        player.socket.send(JSON.stringify({
+          type: "answer", questionId: question.questionId,
+          choice: answerFromPrompt(question.prompt),
+        }));
+        const next = await nextQuestion;
+        if (next.type !== "question") throw new Error("다음 단계 문제가 없습니다.");
+        question = next;
+      }
+      const firstPiece = waitForMessage(player.socket, (message) => message.type === "gate-question");
+      player.socket.send(JSON.stringify({
+        type: "answer", questionId: question.questionId,
+        choice: answerFromPrompt(question.prompt),
+      }));
+      const one = await firstPiece;
+      if (one.type !== "gate-question") throw new Error("첫 관문 조각이 없습니다.");
+      const secondPiece = waitForMessage(player.socket, (message) =>
+        message.type === "gate-question" && message.questionId !== one.questionId);
+      player.socket.send(JSON.stringify({
+        type: "gate-answer", questionId: one.questionId,
+        choice: answerFromPrompt(one.prompt),
+      }));
+      const two = await secondPiece;
+      if (two.type !== "gate-question") throw new Error("두 번째 관문 조각이 없습니다.");
+      const cleared = waitForMessage(player.socket, (message) =>
+        message.type === "stage" && message.stage === 3 && message.status === "cleared");
+      player.socket.send(JSON.stringify({
+        type: "gate-answer", questionId: two.questionId,
+        choice: answerFromPrompt(two.prompt),
+      }));
+      await expect(cleared).resolves.toMatchObject({ stage: 3, status: "cleared" });
+    } finally {
+      player.socket.close(1000, "test complete");
+    }
+  }, 15_000);
+
+  it("보스 방어막을 풀고 서버 거품 공격으로 클리어 시간을 기록한다", async () => {
+    const roomName = `boss-clear-${crypto.randomUUID()}`;
+    await createTestRoom(roomName, {
+      stage1: { targetScore: 10, clearMode: "either" },
+      stage2: { targetScore: 10, clearMode: "either" },
+      stage3: { targetScore: 10, clearMode: "either" },
+    });
+    const player = await joinSocket(roomName, "학생1");
+    try {
+      let question = player.question;
+      for (const stage of [2, 3] as const) {
+        const nextQuestion = waitForMessage(player.socket, (message) => message.type === "question", `${stage}단계 문제`, 6_000);
+        player.socket.send(JSON.stringify({
+          type: "answer", questionId: question.questionId,
+          choice: answerFromPrompt(question.prompt),
+        }));
+        const next = await nextQuestion;
+        if (next.type !== "question") throw new Error("다음 단계 문제가 없습니다.");
+        question = next;
+      }
+      const stageGateOne = waitForMessage(player.socket, (message) => message.type === "gate-question");
+      player.socket.send(JSON.stringify({ type: "answer", questionId: question.questionId, choice: answerFromPrompt(question.prompt) }));
+      const pieceOne = await stageGateOne;
+      if (pieceOne.type !== "gate-question") throw new Error("3단계 관문 문제가 없습니다.");
+      const stageGateTwo = waitForMessage(player.socket, (message) =>
+        message.type === "gate-question" && message.questionId !== pieceOne.questionId);
+      player.socket.send(JSON.stringify({ type: "gate-answer", questionId: pieceOne.questionId, choice: answerFromPrompt(pieceOne.prompt) }));
+      const pieceTwo = await stageGateTwo;
+      if (pieceTwo.type !== "gate-question") throw new Error("3단계 두 번째 조각이 없습니다.");
+      const bossEntry = waitForMessage(player.socket, (message) => message.type === "boss-state", "보스 진입", 6_000);
+      const bossGateOne = waitForMessage(player.socket, (message) => message.type === "gate-question", "보스 방어막 문제", 6_000);
+      player.socket.send(JSON.stringify({ type: "gate-answer", questionId: pieceTwo.questionId, choice: answerFromPrompt(pieceTwo.prompt) }));
+      await expect(bossEntry).resolves.toMatchObject({ health: 6, maxHealth: 6, shielded: true });
+      const bossPieceOne = await bossGateOne;
+      if (bossPieceOne.type !== "gate-question") throw new Error("보스 방어막 문제가 없습니다.");
+      const bossGateTwo = waitForMessage(player.socket, (message) =>
+        message.type === "gate-question" && message.questionId !== bossPieceOne.questionId);
+      player.socket.send(JSON.stringify({ type: "gate-answer", questionId: bossPieceOne.questionId, choice: answerFromPrompt(bossPieceOne.prompt) }));
+      const bossPieceTwo = await bossGateTwo;
+      if (bossPieceTwo.type !== "gate-question") throw new Error("보스 두 번째 조각이 없습니다.");
+      const shieldOff = waitForMessage(player.socket, (message) =>
+        message.type === "boss-state" && !message.shielded);
+      player.socket.send(JSON.stringify({ type: "gate-answer", questionId: bossPieceTwo.questionId, choice: answerFromPrompt(bossPieceTwo.prompt) }));
+      await shieldOff;
+
+      const nearBoss = waitForMessage(player.socket, (message) =>
+        message.type === "snapshot" &&
+        (message.players.find((item) => item.id === player.joined.playerId)?.x ?? 0) >= 350);
+      player.socket.send(JSON.stringify({ type: "input", sequence: 1, axis: 1, jump: false }));
+      await nearBoss;
+      player.socket.send(JSON.stringify({ type: "input", sequence: 2, axis: 0, jump: false }));
+
+      for (let remaining = 5; remaining >= 0; remaining -= 1) {
+        const nextHit = waitForMessage(player.socket, (message) =>
+          message.type === "boss-state" && message.health === remaining,
+          `보스 체력 ${remaining}`, 5_000);
+        player.socket.send(JSON.stringify({ type: "action", sequence: 6 - remaining, kind: "fire", direction: 1 }));
+        await nextHit;
+      }
+      const nextSet = waitForMessage(player.socket, (message) =>
+        message.type === "stage" && message.setNumber === 2 && message.stage === 1,
+        "다음 난이도 세트", 6_000);
+      const nextMonsters = waitForMessage(player.socket, (message) =>
+        message.type === "combat" && message.monsters.length === 3,
+        "다음 세트 몬스터", 6_000);
+      const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomName));
+      const monitor = await room.fetch("https://room.internal/internal/status", {
+        headers: { Authorization: `Bearer ${testTeacherToken}` },
+      });
+      const result = await monitor.json() as {
+        boss: { status: string; elapsedSeconds: number; playerCount: number };
+        bossRuns: Array<{ setNumber: number; elapsedSeconds: number }>;
+      };
+      expect(result.boss.status).toBe("cleared");
+      expect(result.boss.elapsedSeconds).toBeGreaterThan(0);
+      expect(result.boss.playerCount).toBe(1);
+      expect(result.bossRuns).toMatchObject([{ setNumber: 1, elapsedSeconds: result.boss.elapsedSeconds }]);
+      await expect(nextSet).resolves.toMatchObject({
+        setNumber: 2, stage: 1, status: "waiting", targetSeconds: 120, targetScore: 12,
+      });
+      await expect(nextMonsters).resolves.toMatchObject({ type: "combat" });
+    } finally {
+      player.socket.close(1000, "test complete");
+    }
+  }, 35_000);
 
   it("학생마다 다른 문제를 보내고 정답은 서버에서 판정해 교사에게 정답 수만 공개한다", async () => {
     const roomName = `quiz-${crypto.randomUUID()}`;
@@ -631,4 +1017,69 @@ describe("GameRoom", () => {
       player.socket.close(1000, "test complete");
     }
   });
+
+  it("몬스터에 닿은 학생을 친구가 가까이서 구출하면 두 화면에 같은 상태를 보낸다", async () => {
+    const roomName = `rescue-${crypto.randomUUID()}`;
+    const first = await joinSocket(roomName, "학생1");
+    const second = await joinSocket(roomName, "학생2");
+    try {
+      const nearMonster = waitForMessage(first.socket, (message) =>
+        message.type === "snapshot" &&
+        (message.players.find((player) => player.id === first.joined.playerId)?.x ?? 0) >= 265,
+      );
+      first.socket.send(JSON.stringify({ type: "input", sequence: 1, axis: 1, jump: false }));
+      await nearMonster;
+      first.socket.send(JSON.stringify({ type: "input", sequence: 2, axis: 0, jump: false }));
+
+      const down = await waitForMessage(first.socket, (message) =>
+        message.type === "rescue-state" &&
+        message.players.some((player) => player.id === first.joined.playerId && player.downed),
+        "몬스터 접촉", 8_000,
+      );
+      expect(down.type).toBe("rescue-state");
+
+      const fallenSnapshot = await waitForMessage(first.socket, (message) => message.type === "snapshot");
+      if (fallenSnapshot.type !== "snapshot") throw new Error("쓰러진 학생의 위치가 없습니다.");
+      const fallenX = fallenSnapshot.players.find((player) => player.id === first.joined.playerId)?.x;
+      if (fallenX === undefined) throw new Error("쓰러진 학생이 없습니다.");
+
+      second.socket.send(JSON.stringify({ type: "action", sequence: 1, kind: "rescue", direction: 1 }));
+      const invalidTarget = waitForMessage(second.socket, (message) =>
+        message.type === "error" && message.code === "INVALID_MESSAGE");
+      second.socket.send(JSON.stringify({
+        type: "action", sequence: 2, kind: "rescue", direction: 1, targetId: first.joined.playerId,
+      }));
+      await invalidTarget;
+
+      const nearFriend = waitForMessage(second.socket, (message) =>
+        message.type === "snapshot" &&
+        (message.players.find((player) => player.id === second.joined.playerId)?.x ?? 0) >= fallenX - 65,
+      );
+      second.socket.send(JSON.stringify({ type: "input", sequence: 1, axis: 1, jump: false }));
+      await nearFriend;
+      second.socket.send(JSON.stringify({ type: "input", sequence: 2, axis: 0, jump: false }));
+      await waitForMessage(second.socket, (message) => message.type === "snapshot" &&
+        message.players.find((player) => player.id === second.joined.playerId)?.velocityX === 0);
+
+      const rescuedFirst = waitForMessage(first.socket, (message) =>
+        message.type === "rescue-state" && message.rescueCount === 1);
+      const rescuedSecond = waitForMessage(second.socket, (message) =>
+        message.type === "rescue-state" && message.rescueCount === 1);
+      second.socket.send(JSON.stringify({ type: "action", sequence: 3, kind: "rescue", direction: 1 }));
+      const [one, two] = await Promise.all([rescuedFirst, rescuedSecond]);
+      expect(one).toMatchObject({ rescueCount: 1 });
+      expect(two).toMatchObject({ rescueCount: 1 });
+      if (one.type !== "rescue-state") throw new Error("구출 상태가 아닙니다.");
+      expect(one.players.find((player) => player.id === first.joined.playerId)?.downed).toBe(false);
+
+      const monitor = await env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomName)).fetch(
+        "https://room.internal/internal/status",
+        { headers: { Authorization: `Bearer ${testTeacherToken}` } },
+      );
+      expect(await monitor.json()).toMatchObject({ rescueCount: 1, downedCount: 0 });
+    } finally {
+      first.socket.close(1000, "test complete");
+      second.socket.close(1000, "test complete");
+    }
+  }, 15_000);
 });

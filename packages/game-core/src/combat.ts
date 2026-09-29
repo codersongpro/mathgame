@@ -24,6 +24,11 @@ export function monsterLimit(playerCount: number): number {
   return Math.min(8, 2 + Math.floor((Math.max(1, playerCount) - 1) / 2));
 }
 
+/** 세 번째 일반 스테이지는 같은 인원에서 몬스터를 두 마리 늘립니다. */
+export function stageMonsterLimit(playerCount: number, stage: 1 | 2 | 3, setNumber = 1): number {
+  return Math.min(8, monsterLimit(playerCount) + (stage === 3 ? 2 : 0) + Math.max(0, setNumber - 1));
+}
+
 export function createMonster(index: number): CombatMonster {
   const x = 320 + index * 200;
   return {

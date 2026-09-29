@@ -150,7 +150,7 @@ export class GameSocket {
   }
 
   /** 개인 문제의 답과 다음 문제 요청도 검증 후 현재 연결에만 보냅니다. */
-  sendQuiz(message: Extract<ClientMessage, { type: "answer" | "next-question" }>) {
+  sendQuiz(message: Extract<ClientMessage, { type: "answer" | "next-question" | "gate-answer" }>) {
     const parsed = ClientMessageSchema.safeParse(message);
     if (!parsed.success || this.#socket?.readyState !== this.#WebSocketImpl.OPEN) return false;
 

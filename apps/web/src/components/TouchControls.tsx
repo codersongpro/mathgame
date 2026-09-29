@@ -8,16 +8,20 @@ export type TouchInput = {
 };
 
 type ControlName = "left" | "right" | "jump";
-type ActionName = "fire" | "pop";
+type ActionName = "fire" | "pop" | "rescue";
 
 export function TouchControls({
   onChange,
   onAction,
   actionsEnabled,
+  rescueEnabled = false,
+  controlsEnabled = true,
 }: {
   onChange: (input: TouchInput) => void;
   onAction: (action: ActionName) => void;
   actionsEnabled: boolean;
+  rescueEnabled?: boolean;
+  controlsEnabled?: boolean;
 }) {
   const activePointers = useRef<Record<ControlName, Set<number>>>(
     {
@@ -77,6 +81,7 @@ export function TouchControls({
           style={{ minWidth: 64, minHeight: 64 }}
           aria-label="왼쪽으로 이동"
           aria-pressed={input.axis === -1}
+          disabled={!controlsEnabled}
           {...controlProps("left")}
         >
           <span aria-hidden="true">◀</span>
@@ -87,6 +92,7 @@ export function TouchControls({
           style={{ minWidth: 64, minHeight: 64 }}
           aria-label="오른쪽으로 이동"
           aria-pressed={input.axis === 1}
+          disabled={!controlsEnabled}
           {...controlProps("right")}
         >
           <span aria-hidden="true">▶</span>
@@ -96,17 +102,31 @@ export function TouchControls({
         <button
           type="button"
           className="touch-button jump-button"
-          style={{ minWidth: 88, minHeight: 64 }}
+          style={{ minWidth: 64, minHeight: 64 }}
           aria-label="점프"
           aria-pressed={input.jump}
+          disabled={!controlsEnabled}
           {...controlProps("jump")}
         >
           <span aria-hidden="true">점프</span>
         </button>
         <button
           type="button"
+          className="touch-button rescue-button"
+          style={{ minWidth: 64, minHeight: 64 }}
+          aria-label="가까운 친구 구출"
+          disabled={!rescueEnabled}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            if (rescueEnabled) onAction("rescue");
+          }}
+        >
+          <span aria-hidden="true">구출</span>
+        </button>
+        <button
+          type="button"
           className="touch-button bubble-button"
-          style={{ minWidth: 76, minHeight: 64 }}
+          style={{ minWidth: 64, minHeight: 64 }}
           aria-label="거품 발사"
           disabled={!actionsEnabled}
           onPointerDown={(event) => {
@@ -119,7 +139,7 @@ export function TouchControls({
         <button
           type="button"
           className="touch-button pop-button"
-          style={{ minWidth: 76, minHeight: 64 }}
+          style={{ minWidth: 64, minHeight: 64 }}
           aria-label="팡! 터뜨리기"
           disabled={!actionsEnabled}
           onPointerDown={(event) => {

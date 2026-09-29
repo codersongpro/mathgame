@@ -23,9 +23,18 @@ export async function POST(request: Request): Promise<Response> {
       cache: "no-store",
     });
     if (!upstream.ok) {
-      return noStoreJson({ message: upstream.status === 401
-        ? "교사 접속키가 올바르지 않습니다."
-        : "방을 열지 못했습니다. 잠시 후 다시 시도해 주세요." }, upstream.status === 401 ? 401 : 502);
+      // Worker의 원문 메시지나 접속키를 전달하지 않고, 확인할 설정만 안내합니다.
+      const error = await upstream.json().catch(() => null) as { code?: unknown } | null;
+      if (upstream.status === 401) {
+        return noStoreJson({ message: "교사 접속키가 올바르지 않습니다." }, 401);
+      }
+      if (upstream.status === 503 && error?.code === "CONFIG_MISSING") {
+        return noStoreJson({ message: "Cloudflare Worker에 TEACHER_CREATE_KEY Secret을 설정해 주세요." }, 503);
+      }
+      if (upstream.status === 404) {
+        return noStoreJson({ message: "실시간 서버에 교사 방 기능이 없습니다. Worker 배포 버전을 확인해 주세요." }, 502);
+      }
+      return noStoreJson({ message: "방을 열지 못했습니다. 잠시 후 다시 시도해 주세요." }, 502);
     }
 
     const created = await upstream.json() as {

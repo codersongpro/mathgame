@@ -29,6 +29,24 @@ describe("교사 전용 API", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [401, { code: "UNAUTHORIZED" }, "교사 접속키가 올바르지 않습니다.", 401],
+    [503, { code: "CONFIG_MISSING" }, "Cloudflare Worker에 TEACHER_CREATE_KEY Secret을 설정해 주세요.", 503],
+    [404, { code: "NOT_FOUND" }, "실시간 서버에 교사 방 기능이 없습니다. Worker 배포 버전을 확인해 주세요.", 502],
+  ])("Worker 오류 %i를 안전한 안내로 구분한다", async (workerStatus, workerBody, message, responseStatus) => {
+    vi.stubEnv("NEXT_PUBLIC_REALTIME_URL", "wss://realtime.example");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(workerBody, { status: workerStatus })));
+
+    const response = await POST(new Request("https://web.example/api/teacher/rooms", {
+      method: "POST",
+      body: JSON.stringify({ accessKey: "teacher-secret" }),
+    }));
+
+    expect(response.status).toBe(responseStatus);
+    expect(await response.json()).toEqual({ message });
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+  });
+
   it("방 발급 토큰을 HttpOnly 쿠키에만 담고 JSON·URL에는 노출하지 않는다", async () => {
     vi.stubEnv("NEXT_PUBLIC_REALTIME_URL", "wss://realtime.example");
     const token = "a".repeat(64);
@@ -51,6 +69,7 @@ describe("교사 전용 API", () => {
     expect(JSON.parse(fetchMock.mock.calls[0]?.[1].body).settings).toMatchObject({
       stage1: { targetSeconds: 120, targetScore: 100, clearMode: "both" },
       stage2: { targetSeconds: 150, targetScore: 150, clearMode: "both" },
+      stage3: { targetSeconds: 90, targetScore: 180, clearMode: "both" },
     });
     expect(response.headers.get("Set-Cookie")).toContain("HttpOnly; Secure; SameSite=Strict");
     expect(response.headers.get("Set-Cookie")).toContain("Path=/api/teacher/rooms/012345");
